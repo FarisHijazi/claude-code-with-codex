@@ -133,17 +133,61 @@ settings for that one session:
 claude --settings '{"env":{"ANTHROPIC_BASE_URL":"http://localhost:18766"}}'
 ```
 
+### Putting the router's models in the `/model` picker
+
+Typing an exact id works without any setup, but the interactive picker only
+lists models Claude Code knows about. A `modelPicker` lineup adds them, and
+`behavesAs` is what stops the unrecognized-model warning below.
+
+```json
+{
+  "modelPicker": {
+    "replaceBuiltInOptions": false,
+    "options": [
+      { "model": "gemini-3-pro",   "label": "Gemini 3 Pro",     "description": "Google web session, no API key", "behavesAs": "claude-opus-4-8" },
+      { "model": "gemini-3-flash", "label": "Gemini 3 Flash",   "description": "Fast Gemini, no API key",        "behavesAs": "claude-sonnet-5" },
+      { "model": "cursor-cli-ask", "label": "Cursor CLI (ask)", "description": "cursor-agent, read-only",        "behavesAs": "claude-sonnet-5" },
+      { "model": "composer-2.5",   "label": "Cursor Composer",  "description": "Cursor API via cursor-agent",    "behavesAs": "claude-sonnet-5" },
+      { "model": "gpt-5.6-sol",    "label": "GPT-5.6 Sol",      "description": "ChatGPT subscription",           "behavesAs": "claude-opus-4-8" }
+    ]
+  }
+}
+```
+
+`replaceBuiltInOptions: false` appends these rows and keeps the Claude ones;
+`true` replaces the built-in lineup. `behavesAs` takes a **catalog model id**
+(`claude-opus-4-8`, `claude-sonnet-5`), not a family alias — it tells Claude Code
+which known model's capabilities and context window to assume.
+
+`modelPicker` is documented as user-or-managed scope, so it belongs in
+`~/.claude/settings.json`. Measured, `claude --settings '<file>'` also carries
+it, which is how to try a lineup without editing a file every other running
+session reads.
+
+Claude Code can also discover models from a gateway's `/v1/models`
+(`CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1`), and this router serves that
+endpoint — but discovery keeps only ids containing `claude` or `anthropic`, so
+it will never surface `gemini-*`, `cursor-*` or `gpt-*`. For these backends the
+lineup above is the mechanism, not discovery.
+
 ### The unrecognized-model warning
 
 Claude Code only knows the context window of models in its own catalog, so a
 router model it has never heard of prints a warning and is assumed to hold
 200k tokens — which silently caps auto-compact below what the model can take.
-The reply itself is unaffected. Two measured ways to settle it:
+The reply itself is unaffected. Three measured ways to settle it, best first:
 
 ```sh
-claude --model 'gemini-3-flash[1m]'                                 # 1M window
+# 1. a modelPicker row with behavesAs — also puts the model in the picker
+# 2. the [1m] suffix, for a model that really holds 1M
+claude --model 'gemini-3-flash[1m]'
+# 3. declare the window outright
 claude --settings '{"env":{"CLAUDE_CODE_MAX_CONTEXT_TOKENS":"1000000"}}'
 ```
+
+The `modelPicker` row silences it completely — both the banner and the
+`unrecognized_model` line — measured by running the same prompt with and
+without the row.
 
 The `[1m]` suffix is Claude Code's own and never reaches a backend — the router
 strips it while resolving the model.

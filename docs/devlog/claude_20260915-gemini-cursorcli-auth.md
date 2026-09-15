@@ -531,3 +531,52 @@ that scrapes a live tab and yields finer deltas; `extension_connected` is false
 here, so the cookie backend is what is being measured.
 
 Correctness is unaffected: 40 lines, `1` through `40`, every time.
+
+## Getting the router's models into the `/model` picker
+
+Typing an exact id always worked; the interactive picker never listed them. The
+docs name `modelPicker` but every fetch of `settings-reference#modelpicker` and
+`model-config#add-a-custom-model-option` truncated before the schema, so a
+subagent's best guess at the field names (`id`/`displayName`/`contextWindow`)
+was flagged as inferred rather than documented — correctly, because it was wrong.
+
+The authoritative schema came from the shipped binary's own validator strings:
+
+```
+"modelPicker" must be an object with an "options" array of
+  { model, label?, description?, behavesAs? } rows
+"replaceBuiltInOptions" must be true or false
+```
+
+`behavesAs` sits next to `CATALOG_MODEL_IDS` in the binary, so it takes a
+catalog model id (`claude-opus-4-8`), not a family alias.
+
+Verified in three steps, none of which touched the user's `~/.claude/settings.json`:
+
+1. **Schema accepted** — run against an isolated `CLAUDE_CONFIG_DIR`, no
+   "Invalid modelPicker row" or "ignored" lines.
+2. **Warning silenced** — the same prompt with and without the row:
+   without it, *"gemini-3-flash isn't described by this version's model
+   catalog… keeps this session within 200k tokens"* plus the
+   `unrecognized_model` telemetry line; with it, both gone.
+3. **Picker actually lists them** — `claude --settings <file>` in a detached
+   tmux session, `/model`, arrow down:
+
+   ```
+   ↑ 7.  Gemini 3 Pro           Google web session, no API key
+   ❯ 8.  Gemini 3 Flash         Fast Gemini, no API key
+   ...
+   ↑ 10. Cursor Composer        Cursor API via cursor-agent
+   ❯ 11. GPT-5.6 Sol            ChatGPT subscription
+   ```
+
+Two findings worth keeping:
+
+- **`--settings` carries `modelPicker`**, even though the settings reference
+  lists its scope as user-or-managed only. That is the way to try a lineup
+  without editing a file every other running session reads.
+- **Gateway model discovery cannot help here.** `CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1`
+  makes Claude Code `GET /v1/models` from the router, which this fork already
+  serves — but it *"keeps an entry when its `id` contains `claude` or
+  `anthropic` anywhere in the string… and ignores the rest"*. No `gemini-*`,
+  `cursor-*` or `gpt-*` id can pass that filter, so the lineup is the mechanism.
