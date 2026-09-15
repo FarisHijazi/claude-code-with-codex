@@ -213,6 +213,12 @@ The model id carries the execution mode:
 Code — Cursor offers a few hundred models and listing every combination would
 bury the `/model` picker — but any of them routes.
 
+**It runs in one fixed directory.** Claude Code does not send its working
+directory in an Anthropic request, so the proxy cannot follow you from project
+to project: `cursor-agent` runs in `cursorCli.workspace`, or in whatever
+directory the proxy itself was started in. Point it at the project you want, or
+run a proxy per project on its own port.
+
 **This backend is an agent, not a model.** `cursor-agent` runs its own tool loop
 in its own workspace, so Claude Code's tools are not advertised and no
 `tool_use` block is returned. One Claude Code turn delegates the whole turn to a

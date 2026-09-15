@@ -71,7 +71,12 @@ any of the three.
    by both new backends, as is `anthropic::accumulate_response` (SSE -> one
    Messages JSON), which every streaming backend needs for its non-streaming
    path.
-7. **`gemini` overlaps with `claude-code-router`**, which routes to any
+7. **`cursor-cli` has one fixed workspace.** An Anthropic request carries no
+   working directory, so the agent runs in `cursorCli.workspace` or the
+   proxy's own cwd — not the project Claude Code is open in. Claude Code does
+   put its cwd in the system prompt's env block, so auto-detection is possible,
+   but it has not been verified against real traffic and is not implemented.
+8. **`gemini` overlaps with `claude-code-router`**, which routes to any
    OpenAI-compatible endpoint from config. It is kept to avoid running a second
    gateway alongside the Claude/Codex subscription logic here — see the devlog
    before extending it. `cursor-cli` has no equivalent anywhere.
