@@ -317,3 +317,61 @@ on Linux, which is presumably why they survived:
 
 The local checkout stays on that branch until the PR merges, because the server
 on `:8100` needs the fix on disk to restart.
+
+## Subagents on a router model
+
+Asked whether these backends can back a Claude Code subagent. They can, and
+nothing had to be built for it: Claude Code sends a subagent's request with
+whatever `model:` its definition names, so the router routes it like any other.
+
+Measured, in a scratch project with `.claude/agents/*.md`:
+
+| agent | `model:` | result |
+| --- | --- | --- |
+| `gemini-probe` | `gemini-3-flash` | returned its token; 3 requests landed on gemini-web-api during the run |
+| `gemini-tool-probe` | `gemini-3-pro` | ran a real Claude Code tool loop (2 tool calls), returned the file contents |
+| `cursor-probe` | `cursor-cli-ask` | spawned and routed, but no handback — see below |
+
+The proof that routing is real, rather than a silent fallback to a Claude model,
+is Claude Code's own telemetry line: `{"model":"gemini-3-flash",
+"query_source":"agent:custom:gemini-probe"}`, plus the request count moving on
+the gemini-web-api side.
+
+Two limits worth stating:
+
+- `model:` in an agent file takes a full id. The `Agent` tool's own `model`
+  override is a fixed enum (`sonnet`/`opus`/`haiku`/`fable`), so *"spawn a
+  gemini subagent"* with no definition file cannot reach these ids — it quietly
+  gets a Claude model. The definition file is the mechanism.
+- The ids are the Gemini **3** family. `gemini-2.5-pro` is not one of them and
+  returns a clean 400 listing what is; gemini-web-api itself advertises nine
+  ids, none of them 2.5.
+
+### Why `cursor-cli` makes a bad subagent
+
+Not a routing failure — a shape mismatch. Sent a request carrying a `Bash` tool
+definition, `cursor-cli-ask` ignored it, ran the command with its own shell, and
+answered in text:
+
+```
+stop_reason: end_turn
+block types: ['thinking', 'text', 'thinking', 'text']
+TEXT: Running the command now.
+TEXT: `HELLO`
+```
+
+No `tool_use` block, so a subagent on it cannot drive the tool list it was given
+and cannot be held to the parent's permission mode. It is a model you delegate a
+whole task to, not a subagent worker. Documented in the README as such.
+
+### Ask mode holds against a shell redirect
+
+Worth recording because "read-only" could mean two different things. An ask-mode
+run *did* execute `echo HELLO` and report the output — so it runs commands. Told
+to run `echo SIDE-EFFECT > created_by_shell.txt` it refused:
+
+> I can't run that command — **Ask mode** only allows read-only actions
+
+and the directory was byte-identical afterwards. So `ask` is "may read anything
+the proxy user can read", not "runs nothing", and the write block is enforced on
+shell redirects, not only on the edit tools.

@@ -174,6 +174,40 @@ The proxy listens on `127.0.0.1:18765` by default. Change it with
 Alias remapping is optional. For example,
 `ANTHROPIC_DEFAULT_SONNET_MODEL=gpt-5.6-terra` makes `/model sonnet` use Codex.
 
+## Subagents on a router model
+
+A subagent runs on whatever its definition names, and Claude Code passes that id
+through to the router untouched — so any model the router serves can back one.
+Put the id in the frontmatter of a `.claude/agents/*.md` file:
+
+```md
+---
+name: gemini-reviewer
+description: Second-opinion reviewer. Use for reviewing a diff.
+model: gemini-3-pro
+tools: Read, Grep, Bash
+---
+
+Review the diff and report only what is wrong.
+```
+
+Claude Code names the subagent in its own telemetry (`agent:custom:gemini-reviewer`
+alongside `model: gemini-3-pro`), which is the quickest way to confirm a run went
+where you meant. A `gemini-3-pro` subagent drives Claude Code's tools normally —
+measured at two tool calls for a read-a-file-and-report task.
+
+The `model:` field takes a full id, not just `sonnet`/`opus`/`haiku`/`inherit`.
+The `Agent` tool's own `model` override is a fixed enum and cannot reach these
+ids, so an ad-hoc *"spawn a gemini subagent"* with no definition file falls back
+to a Claude model — the definition file is what makes it stick.
+
+**`cursor-cli` is a poor fit for a subagent.** It never returns a `tool_use`
+block; it runs its own tool loop and hands back prose (see below), so a subagent
+on it cannot use the tool list you gave it and cannot be held to the parent's
+permission mode. Sent a request carrying a `Bash` tool it ignored the tool,
+ran the command with its own shell, and replied in text. Use it as a model you
+delegate a whole task to, not as a subagent worker.
+
 ## Other backends
 
 The same proxy can also route to **Kimi**, **Grok**, and **Cursor** models, each
@@ -254,6 +288,12 @@ Note what that pin is: `--workspace` chooses where the agent *starts*, not what
 it may touch. An agent given an absolute path in the prompt will read it even
 from a pinned instance. What actually contains a run is the mode — `ask` and
 `plan` cannot write — and the file permissions of the user the proxy runs as.
+
+The mode holds against a shell redirect, not just the edit tools. An ask-mode
+run told to execute `echo SIDE-EFFECT > created_by_shell.txt` answered *"Ask
+mode only allows read-only actions"* and left the directory byte-identical. It
+does run read-only commands itself, so treat `ask` as "may read anything the
+proxy user can read", not as "runs nothing".
 
 **This backend is an agent, not a model.** `cursor-agent` runs its own tool loop
 in its own workspace, so Claude Code's tools are not advertised and no
