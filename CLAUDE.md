@@ -80,7 +80,18 @@ any of the three.
    pin: `--workspace` sets where the agent *starts*, not what it may touch.
    Containment is the mode (`ask`/`plan` cannot write) and the proxy user's own
    file permissions.
-8. **`gemini` overlaps with `claude-code-router`**, which routes to any
+8. **Listings are availability-gated; routing is not.** `Provider::availability()`
+   decides whether a backend's models appear in `/v1/models`, the unknown-model
+   error and `claude-codex models`; `provider_for_model` ignores it entirely, so
+   a hidden id still routes and signing in needs no restart. Tests that assert a
+   provider appears must set `CCP_SHOW_ALL_MODELS=1` — two upstream CLI tests and
+   one of this fork's own had to be updated for exactly that reason.
+9. **The `cursor` backend can borrow `cursor-agent`'s token** from the macOS
+   Keychain (`cursor-access-token`/`cursor-user`) when the proxy has no login of
+   its own. Read fresh every time, never written to the proxy's store — copying
+   it would go stale the moment the CLI refreshed. Not to be confused with the
+   `cursor-cli` backend, which spawns the CLI rather than reusing its token.
+10. **`gemini` overlaps with `claude-code-router`**, which routes to any
    OpenAI-compatible endpoint from config. It is kept to avoid running a second
    gateway alongside the Claude/Codex subscription logic here — see the devlog
    before extending it. `cursor-cli` has no equivalent anywhere.

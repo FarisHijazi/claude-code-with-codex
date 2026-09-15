@@ -1,7 +1,7 @@
 use crate::{
     anthropic::{json_error, schema::MessagesRequest},
     config::AliasProvider,
-    provider::{CliHandlers, Provider, RequestContext},
+    provider::{Availability, CliHandlers, Provider, RequestContext},
 };
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
@@ -159,10 +159,34 @@ impl Registry {
         models
     }
 
+    /// Backends that can serve a request right now, with why the others cannot.
+    ///
+    /// Probed on demand rather than cached: this runs only when models are
+    /// listed, and a fresh answer means signing into a backend takes effect
+    /// without restarting the proxy.
+    pub fn availability(&self) -> BTreeMap<String, Availability> {
+        self.handlers
+            .iter()
+            .map(|(name, provider)| (name.clone(), provider.availability()))
+            .collect()
+    }
+
+    /// Provider names worth listing — everything, if `CCP_SHOW_ALL_MODELS` is set.
+    fn listable_providers(&self) -> Vec<String> {
+        if crate::config::show_all_models() {
+            return self.handlers.keys().cloned().collect();
+        }
+        self.handlers
+            .iter()
+            .filter(|(_, provider)| provider.availability().is_ready())
+            .map(|(name, _)| name.clone())
+            .collect()
+    }
+
     pub fn all_supported_models(&self) -> Vec<(String, String)> {
         let mut out = Vec::new();
-        for provider in self.handlers.keys() {
-            for model in self.supported_models_for(provider) {
+        for provider in self.listable_providers() {
+            for model in self.supported_models_for(&provider) {
                 out.push((model, provider.clone()));
             }
         }
@@ -171,10 +195,19 @@ impl Registry {
 
     pub fn grouped_models(&self) -> BTreeMap<String, Vec<String>> {
         let mut out = BTreeMap::new();
-        for provider in self.handlers.keys() {
-            out.insert(provider.clone(), self.supported_models_for(provider));
+        for provider in self.listable_providers() {
+            let models = self.supported_models_for(&provider);
+            out.insert(provider, models);
         }
         out
+    }
+
+    /// Every backend's models, available or not. For diagnostics only.
+    pub fn grouped_models_all(&self) -> BTreeMap<String, Vec<String>> {
+        self.handlers
+            .keys()
+            .map(|provider| (provider.clone(), self.supported_models_for(provider)))
+            .collect()
     }
 
     pub fn provider_for_model(
@@ -223,7 +256,21 @@ impl Registry {
             models.sort_unstable();
             parts.push(format!("{}: {}", provider, models.join(", ")));
         }
-        format!("Supported: {}.", parts.join("; "))
+        let mut message = format!("Supported: {}.", parts.join("; "));
+        // Name what is missing and how to get it, or a signed-out backend looks
+        // like a backend that was never built.
+        let hidden: Vec<String> = self
+            .availability()
+            .into_iter()
+            .filter_map(|(provider, state)| match state {
+                Availability::Unavailable { hint } => Some(format!("{provider} ({hint})")),
+                Availability::Ready => None,
+            })
+            .collect();
+        if !hidden.is_empty() {
+            message.push_str(&format!(" Not signed in: {}.", hidden.join("; ")));
+        }
+        message
     }
 }
 

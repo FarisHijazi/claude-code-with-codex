@@ -504,6 +504,14 @@ impl CodexProvider {
 
 #[async_trait]
 impl Provider for CodexProvider {
+    /// Codex auth belongs to the Codex CLI; this proxy only reads its file.
+    fn availability(&self) -> crate::provider::Availability {
+        match file_store().load_auth() {
+            Ok(Some(_)) => crate::provider::Availability::Ready,
+            _ => crate::provider::Availability::unavailable("run `codex login`"),
+        }
+    }
+
     fn name(&self) -> &'static str {
         "codex"
     }

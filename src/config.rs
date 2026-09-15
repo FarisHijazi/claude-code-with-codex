@@ -1002,6 +1002,17 @@ pub fn cursor_cli_timeout_secs() -> u64 {
     900
 }
 
+/// List every backend, including ones nothing is signed into.
+///
+/// Off by default: an id in the `/model` picker that can only ever 400 is worse
+/// than an id that is missing, and the unknown-model error stays readable.
+pub fn show_all_models() -> bool {
+    matches!(
+        std::env::var("CCP_SHOW_ALL_MODELS").ok().as_deref(),
+        Some("1") | Some("true")
+    )
+}
+
 pub fn cursor_cli_workspace() -> Option<String> {
     let env: HashMap<_, _> = std::env::vars().collect();
     if let Some(raw) = env.get("CCP_CURSOR_CLI_WORKSPACE") {

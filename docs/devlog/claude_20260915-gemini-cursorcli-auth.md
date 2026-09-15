@@ -452,3 +452,82 @@ remove a dependency. It also treats CLI agents as clients, never as backends, so
 `cursor-cli` has no prior art there. The one thing it confirmed is that
 OpenAI-compatible → Anthropic translation is the standard shape for this — which
 is the shape already used here.
+
+## Listing only what this machine can actually serve
+
+The `/model` picker and the unknown-model error were advertising every backend
+the binary knows how to build, including ones with no credentials anywhere on
+the machine. Checked: `kimi`, `grok` and `cursor` had no auth file at all under
+`~/.config/claude-code-proxy/`, yet all three were offered.
+
+`Provider::availability()` now gates every listing. It is deliberately cheap and
+local — a credential file, a binary on `PATH`, a socket that accepts a
+connection — and runs only when models are listed, never on the request path, so
+nothing is cached and signing into a backend takes effect without a restart.
+
+Routing deliberately does **not** consult it. Hiding an id from a list is a UI
+decision; refusing to route one would turn a stale probe into an outage.
+
+Measured by flipping each input rather than by reading the code:
+
+```
+gemini server up                       -> codex, cursor, cursor-cli, gemini
+CCP_GEMINI_BASE_URL=http://127.0.0.1:1 -> gemini gone
+CCP_CURSOR_CLI_BINARY=/nonexistent     -> cursor-cli gone
+CCP_SHOW_ALL_MODELS=1                  -> kimi and grok back
+```
+
+The unknown-model error gained a trailing `Not signed in: kimi (run
+`claude-codex kimi login`); …`, because a signed-out backend that simply vanishes
+is indistinguishable from one that was never built.
+
+Three tests encoded the old "list everything" contract — two upstream
+(`models_prints_all_providers`, `models_output_is_stable_order`) and one of this
+fork's own (`models_banner_lists_new_backends_after_the_upstream_order`). All
+three now set `CCP_SHOW_ALL_MODELS=1`, which keeps them testing what they were
+actually about (presence and order) rather than what happens to be signed in on
+the machine running them. Two new tests cover the filtering itself.
+
+## `cursor` borrows the `cursor-agent` session
+
+`cursor` was hidden by the first cut of the above, which was wrong: there is a
+working Cursor login on this machine, just not one the proxy had been told
+about. `cursor-agent` keeps its access token in the macOS Keychain under service
+`cursor-access-token`, account `cursor-user`, and — measured — it reads back
+headlessly with no authorization prompt.
+
+`load_cursor_auth()` now falls through to it: environment token, then an
+explicit `claude-codex cursor login`, then the borrowed CLI session. Borrowed
+rather than copied into the proxy's own store, because the CLI refreshes that
+token on its own schedule; reading it fresh each time is what keeps the two in
+step, and `cursor-agent logout` correctly takes the backend with it. It reuses
+the existing `SystemKeychain` rather than shelling out to `security` again.
+
+Proven end to end with no `claude-codex cursor login` ever run:
+
+```
+POST /v1/messages {"model":"composer-2.5"}  ->  CURSOR-TOKEN-OK  stop=end_turn
+```
+
+So one `cursor-agent login` now lights up both Cursor backends: the API one and
+the CLI one.
+
+## Is the gemini stream a real token stream?
+
+Asked directly, and the honest answer needed a measurement on both sides of the
+proxy. Same prompt ("count from 1 to 40"), first through the proxy, then against
+`gemini-web-api` on `:8100` directly:
+
+```
+through the proxy (gemini-3-pro)   4 text deltas, first at 6.07s, spread 0.46s
+gemini-web-api directly            4 chunks,      first at 14.60s, spread 0.50s
+```
+
+The chunking is upstream. The proxy adds no buffering — four upstream chunks
+become four Anthropic deltas — but the Gemini web app's `batchexecute` protocol
+is not a token stream, so the answer lands in a few bursts after a long pause
+rather than typing out. `gemini-web-api` does have a Chrome-extension backend
+that scrapes a live tab and yields finer deltas; `extension_connected` is false
+here, so the cookie backend is what is being measured.
+
+Correctness is unaffected: 40 lines, `1` through `40`, every time.

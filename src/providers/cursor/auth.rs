@@ -4,11 +4,15 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use crate::auth::{AuthStorage, KeychainFileAuthStore, SystemKeychain};
+use crate::auth::{AuthStorage, Keychain, KeychainFileAuthStore, SystemKeychain};
 use crate::{config, paths};
 
 pub const KEYCHAIN_SERVICE: &str = "claude-code-proxy.cursor";
 pub const KEYCHAIN_ACCOUNT: &str = "auth";
+
+/// Where the Cursor CLI keeps the token it obtained from `cursor-agent login`.
+const CURSOR_AGENT_KEYCHAIN_SERVICE: &str = "cursor-access-token";
+const CURSOR_AGENT_KEYCHAIN_ACCOUNT: &str = "cursor-user";
 
 const REFRESH_EXPIRY_SKEW_MS: u64 = 60_000;
 const CURSOR_WEBSITE_URL: &str = "https://cursor.com";
@@ -134,7 +138,43 @@ pub fn load_cursor_auth() -> anyhow::Result<Option<CursorAuth>> {
             "environment".to_string(),
         )));
     }
-    file_store().load_auth()
+    // An explicit `claude-codex cursor login` is a deliberate choice and wins.
+    if let Some(auth) = file_store().load_auth()? {
+        return Ok(Some(auth));
+    }
+    // Otherwise borrow whatever `cursor-agent` is already signed in with, so a
+    // working Cursor CLI is enough and no second login is needed.
+    Ok(cursor_agent_token().map(|token| {
+        enrich(
+            StoredCursorAuth {
+                access_token: token,
+                refresh_token: None,
+                api_key: None,
+            },
+            "cursor-agent".to_string(),
+        )
+    }))
+}
+
+/// The access token `cursor-agent` is holding, if it is signed in.
+///
+/// Borrowed, never copied into the proxy's own store: the CLI refreshes this
+/// token on its own schedule, so reading it fresh each time is what keeps the
+/// two in step — and `cursor-agent logout` takes this backend with it, which is
+/// the behaviour you want from a borrowed credential.
+///
+/// macOS only for now; the CLI stores it elsewhere on other platforms, and a
+/// `None` here simply means this source has nothing to offer.
+pub fn cursor_agent_token() -> Option<String> {
+    if !use_macos_keychain() {
+        return None;
+    }
+    SystemKeychain
+        .read(CURSOR_AGENT_KEYCHAIN_SERVICE, CURSOR_AGENT_KEYCHAIN_ACCOUNT)
+        .ok()
+        .flatten()
+        .map(|token| token.trim().to_string())
+        .filter(|token| !token.is_empty())
 }
 
 /// Load only the bearer token for call sites that do not need auth metadata.

@@ -21,11 +21,53 @@ pub enum AuthCommand {
     Logout,
 }
 
+/// Whether a backend can actually serve a request right now.
+///
+/// Listing a backend nobody is signed into is worse than not listing it: the
+/// `/model` picker fills with ids that 400, and the unknown-model error grows
+/// long enough to bury the ids that do work.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Availability {
+    Ready,
+    /// Hidden from listings. `hint` says what to do about it, in one line.
+    Unavailable {
+        hint: String,
+    },
+}
+
+impl Availability {
+    pub fn unavailable(hint: impl Into<String>) -> Self {
+        Self::Unavailable { hint: hint.into() }
+    }
+
+    pub fn is_ready(&self) -> bool {
+        matches!(self, Self::Ready)
+    }
+
+    /// `Ready` when the credential file exists and holds something.
+    pub fn from_file(path: &std::path::Path, hint: impl Into<String>) -> Self {
+        match std::fs::metadata(path) {
+            Ok(meta) if meta.len() > 0 => Self::Ready,
+            _ => Self::unavailable(hint),
+        }
+    }
+}
+
 #[async_trait]
 pub trait Provider: Send + Sync {
     fn name(&self) -> &'static str;
     fn supported_models(&self) -> Vec<String>;
     fn cli(&self) -> &'static dyn CliHandlers;
+
+    /// Whether this backend can serve a request right now.
+    ///
+    /// Runs when models are listed, never on the request path, so it must stay
+    /// cheap and local: a file on disk, a binary on `PATH`, a socket that
+    /// accepts a connection. Routing stays permissive either way — a backend
+    /// that comes up mid-session still answers without a restart.
+    fn availability(&self) -> Availability {
+        Availability::Ready
+    }
     async fn handle_messages(&self, body: MessagesRequest, ctx: RequestContext) -> Response;
 
     async fn handle_messages_with_conversation_identity(

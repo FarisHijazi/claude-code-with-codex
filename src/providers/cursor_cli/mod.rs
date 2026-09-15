@@ -89,6 +89,18 @@ fn check_write_permission(parsed: &ParsedModel) -> Result<(), ProviderError> {
 
 #[async_trait]
 impl Provider for CursorCliProvider {
+    /// The CLI has to be there to spawn. Whether it is signed in is left to the
+    /// run itself — asking would cost a subprocess every time models are listed.
+    fn availability(&self) -> crate::provider::Availability {
+        if process::binary_is_runnable(&crate::config::cursor_cli_binary()) {
+            crate::provider::Availability::Ready
+        } else {
+            crate::provider::Availability::unavailable(
+                "install the Cursor CLI (https://cursor.com/cli) and run `cursor-agent login`",
+            )
+        }
+    }
+
     fn name(&self) -> &'static str {
         "cursor-cli"
     }

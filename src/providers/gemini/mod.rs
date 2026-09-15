@@ -92,6 +92,22 @@ impl GeminiProvider {
 
 #[async_trait]
 impl Provider for GeminiProvider {
+    /// Reachability, not credentials: the Google session lives in the
+    /// gemini-web-api server, so "is that server up" is the whole question.
+    ///
+    /// A TCP connect rather than an HTTP request — enough to tell a listening
+    /// server from nothing at all, and bounded so a listing never hangs on it.
+    fn availability(&self) -> crate::provider::Availability {
+        if server_is_listening(&crate::config::gemini_base_url()) {
+            crate::provider::Availability::Ready
+        } else {
+            crate::provider::Availability::unavailable(format!(
+                "start gemini-web-api at {}",
+                crate::config::gemini_base_url()
+            ))
+        }
+    }
+
     fn name(&self) -> &'static str {
         "gemini"
     }
@@ -496,5 +512,71 @@ mod tests {
         };
         let (resolved, _) = GeminiProvider::prepare(&body, &ctx).expect("prepare");
         assert_eq!(resolved, GEMINI_DEFAULT_MODEL);
+    }
+}
+
+/// Whether something accepts TCP connections at `base_url`'s host and port.
+fn server_is_listening(base_url: &str) -> bool {
+    use std::net::{TcpStream, ToSocketAddrs};
+    use std::time::Duration;
+
+    let Some((host, port)) = host_and_port(base_url) else {
+        return false;
+    };
+    let Ok(addrs) = (host.as_str(), port).to_socket_addrs() else {
+        return false;
+    };
+    addrs.into_iter().any(|addr| {
+        TcpStream::connect_timeout(&addr, Duration::from_millis(PROBE_TIMEOUT_MS)).is_ok()
+    })
+}
+
+const PROBE_TIMEOUT_MS: u64 = 400;
+
+/// Host and port from a base URL, defaulting the port by scheme.
+fn host_and_port(base_url: &str) -> Option<(String, u16)> {
+    let rest = base_url
+        .split_once("://")
+        .map(|(scheme, rest)| (scheme, rest))
+        .unwrap_or(("http", base_url));
+    let (scheme, rest) = rest;
+    let authority = rest.split(['/', '?', '#']).next()?;
+    let authority = authority
+        .rsplit_once('@')
+        .map_or(authority, |(_, host)| host);
+    match authority.rsplit_once(':') {
+        // Not a port if it is part of a bare IPv6 address.
+        Some((host, port)) if !host.contains(':') => Some((host.to_string(), port.parse().ok()?)),
+        _ => Some((
+            authority.trim_matches(['[', ']']).to_string(),
+            if scheme == "https" { 443 } else { 80 },
+        )),
+    }
+}
+
+#[cfg(test)]
+mod availability_tests {
+    use super::{host_and_port, server_is_listening};
+
+    #[test]
+    fn splits_host_and_port_out_of_a_base_url() {
+        assert_eq!(
+            host_and_port("http://localhost:8100/v1"),
+            Some(("localhost".into(), 8100))
+        );
+        assert_eq!(
+            host_and_port("https://gemini.example.com/v1"),
+            Some(("gemini.example.com".into(), 443))
+        );
+        assert_eq!(
+            host_and_port("http://example.com/v1"),
+            Some(("example.com".into(), 80))
+        );
+    }
+
+    #[test]
+    fn nothing_listens_on_a_closed_port() {
+        // Port 1 is reserved and never bound by this test suite.
+        assert!(!server_is_listening("http://127.0.0.1:1/v1"));
     }
 }

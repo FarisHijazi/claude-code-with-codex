@@ -46,6 +46,13 @@ impl KimiProvider {
 
 #[async_trait]
 impl Provider for KimiProvider {
+    /// Kimi signs in through this proxy, so its own auth file is the whole test.
+    fn availability(&self) -> crate::provider::Availability {
+        crate::provider::Availability::from_file(
+            &crate::paths::provider_auth_file("kimi"),
+            "run `claude-codex kimi login`",
+        )
+    }
     fn name(&self) -> &'static str {
         "kimi"
     }

@@ -58,6 +58,16 @@ impl CursorProvider {
 
 #[async_trait]
 impl Provider for CursorProvider {
+    /// Signed in through this proxy, or borrowing the Cursor CLI's session —
+    /// either is enough, so a working `cursor-agent login` needs no second login.
+    fn availability(&self) -> crate::provider::Availability {
+        match auth::load_cursor_auth() {
+            Ok(Some(_)) => crate::provider::Availability::Ready,
+            _ => crate::provider::Availability::unavailable(
+                "run `cursor-agent login`, or `claude-codex cursor login`",
+            ),
+        }
+    }
     fn name(&self) -> &'static str {
         "cursor"
     }

@@ -20,15 +20,49 @@ fn version_aliases_print_expected_version() -> Result<(), Box<dyn std::error::Er
 #[test]
 fn models_prints_all_providers() -> Result<(), Box<dyn std::error::Error>> {
     let mut cmd = Command::cargo_bin("claude-codex")?;
-    cmd.arg("models");
+    cmd.arg("models").env("CCP_SHOW_ALL_MODELS", "1");
     let out = String::from_utf8(cmd.output()?.stdout)?;
     assert!(out.contains("codex:"));
     assert!(out.contains("kimi:"));
     assert!(out.contains("cursor:"));
 
     let mut cmd = Command::cargo_bin("claude-codex")?;
-    cmd.args(["models", "--full"]);
+    cmd.args(["models", "--full"])
+        .env("CCP_SHOW_ALL_MODELS", "1");
     cmd.output()?;
+    Ok(())
+}
+
+/// A backend nothing is signed into is not offered. An empty config dir gives
+/// kimi, grok and cursor no credentials to find — and, because it also turns off
+/// the macOS keychain, no cursor-agent session to borrow either.
+#[test]
+fn models_hides_backends_with_no_credentials() -> Result<(), Box<dyn std::error::Error>> {
+    let temp = TempDir::new()?;
+    let mut cmd = Command::cargo_bin("claude-codex")?;
+    cmd.arg("models").env("CCP_CONFIG_DIR", temp.path());
+    let out = String::from_utf8(cmd.output()?.stdout)?;
+    assert!(!out.contains("kimi:"), "signed-out kimi was listed: {out}");
+    assert!(!out.contains("grok:"), "signed-out grok was listed: {out}");
+    assert!(
+        !out.contains("cursor:"),
+        "signed-out cursor was listed: {out}"
+    );
+    Ok(())
+}
+
+/// The escape hatch has to actually bring them back, or there is no way to see
+/// what exists before signing in.
+#[test]
+fn show_all_models_reveals_the_hidden_backends() -> Result<(), Box<dyn std::error::Error>> {
+    let temp = TempDir::new()?;
+    let mut cmd = Command::cargo_bin("claude-codex")?;
+    cmd.arg("models")
+        .env("CCP_CONFIG_DIR", temp.path())
+        .env("CCP_SHOW_ALL_MODELS", "1");
+    let out = String::from_utf8(cmd.output()?.stdout)?;
+    assert!(out.contains("kimi:"), "{out}");
+    assert!(out.contains("grok:"), "{out}");
     Ok(())
 }
 
@@ -90,7 +124,8 @@ fn provider_logout_without_auth_is_success() -> Result<(), Box<dyn std::error::E
 #[test]
 fn models_output_is_stable_order() -> Result<(), Box<dyn std::error::Error>> {
     let mut cmd = Command::cargo_bin("claude-codex")?;
-    cmd.args(["models", "--full"]);
+    cmd.args(["models", "--full"])
+        .env("CCP_SHOW_ALL_MODELS", "1");
     let output = cmd.output()?;
     let out = String::from_utf8(output.stdout)?;
     let codex_pos = out.find("codex:").unwrap_or(0);

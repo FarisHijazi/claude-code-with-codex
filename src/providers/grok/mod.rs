@@ -67,6 +67,13 @@ impl Default for GrokProvider {
 
 #[async_trait]
 impl Provider for GrokProvider {
+    /// Grok signs in through this proxy, so its own auth file is the whole test.
+    fn availability(&self) -> crate::provider::Availability {
+        crate::provider::Availability::from_file(
+            &crate::paths::provider_auth_file("grok"),
+            "run `claude-codex grok login`",
+        )
+    }
     fn name(&self) -> &'static str {
         "grok"
     }

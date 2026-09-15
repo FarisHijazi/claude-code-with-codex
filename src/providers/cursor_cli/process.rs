@@ -241,3 +241,44 @@ mod tests {
         assert!(message.contains("CCP_CURSOR_CLI_BINARY"), "{message}");
     }
 }
+
+/// Whether `binary` can actually be spawned: an explicit path that exists and is
+/// executable, or a bare name resolvable on `PATH`.
+///
+/// Deliberately does not run it — this answers "is the CLI installed", which is
+/// all a model listing needs, without paying for a subprocess.
+pub fn binary_is_runnable(binary: &str) -> bool {
+    let path = std::path::Path::new(binary);
+    if path.is_absolute() || binary.contains('/') {
+        return is_executable_file(path);
+    }
+    let Some(paths) = std::env::var_os("PATH") else {
+        return false;
+    };
+    std::env::split_paths(&paths).any(|dir| is_executable_file(&dir.join(binary)))
+}
+
+fn is_executable_file(path: &std::path::Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::metadata(path)
+        .map(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0)
+        .unwrap_or(false)
+}
+
+#[cfg(test)]
+mod availability_tests {
+    use super::binary_is_runnable;
+
+    #[test]
+    fn a_bare_name_resolves_through_path() {
+        assert!(binary_is_runnable("sh"));
+        assert!(!binary_is_runnable("definitely-not-a-real-binary-xyzzy"));
+    }
+
+    #[test]
+    fn an_explicit_path_must_exist_and_be_executable() {
+        assert!(binary_is_runnable("/bin/sh"));
+        assert!(!binary_is_runnable("/bin/sh/nope"));
+        assert!(!binary_is_runnable("/etc/hosts"));
+    }
+}

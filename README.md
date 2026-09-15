@@ -174,6 +174,42 @@ The proxy listens on `127.0.0.1:18765` by default. Change it with
 Alias remapping is optional. For example,
 `ANTHROPIC_DEFAULT_SONNET_MODEL=gpt-5.6-terra` makes `/model sonnet` use Codex.
 
+## Only what you can actually use is listed
+
+Every backend is probed before its models are offered, so `/model` and the
+unknown-model error show what this machine can serve rather than everything the
+binary knows how to serve. The probe is cheap and local — a credential file, a
+binary on `PATH`, a socket that accepts a connection — and runs only when models
+are listed, never on the request path.
+
+| backend | offered when |
+| --- | --- |
+| `anthropic` | always — Claude Code forwards its own subscription credentials |
+| `codex` | the Codex CLI has written `~/.codex/auth.json` |
+| `cursor` | signed in through this proxy, **or** `cursor-agent` is signed in |
+| `cursor-cli` | the `cursor-agent` binary is on `PATH` |
+| `gemini` | something is listening at `gemini.baseUrl` |
+| `kimi`, `grok` | signed in through this proxy |
+
+Routing stays permissive: an id that is hidden still routes if you ask for it by
+name, so signing into a backend takes effect without restarting the proxy. The
+unknown-model error names what is missing and how to get it, rather than letting
+a signed-out backend look like one that was never built.
+
+`CCP_SHOW_ALL_MODELS=1` lists everything regardless — useful for seeing what
+exists before signing in.
+
+### Cursor without a second login
+
+The `cursor` backend prefers its own `claude-codex cursor login`, and otherwise
+borrows the access token `cursor-agent` is already holding (macOS Keychain,
+service `cursor-access-token`). Borrowed, never copied: the CLI refreshes that
+token on its own schedule, so reading it fresh each time keeps the two in step,
+and `cursor-agent logout` takes this backend with it.
+
+That means one `cursor-agent login` lights up **both** Cursor backends — the API
+one (`composer-2.5`, `cursor-agent`, …) and the CLI one (`cursor-cli`).
+
 ## Subagents on a router model
 
 A subagent runs on whatever its definition names, and Claude Code passes that id
