@@ -279,3 +279,41 @@ End-to-end, against the live fork on `:18766`: a request whose env block named a
 scratch project got back `ZUCCHINI-4471`, read from a file that exists only
 there. Six unit tests cover the marker forms, the freshest-block rule, and the
 two rejections (relative paths, prose).
+
+## Connected, end to end
+
+Real `claude -p` sessions against the fork on `:18766`, not curl:
+
+| model | via | result |
+| --- | --- | --- |
+| `gemini-3-flash` | Google web session, no API key | `HANDOVER-OK` |
+| `cursor-cli-ask` | `cursor-agent login` | `CURSOR-OK` |
+| `gpt-5.6-sol` | ChatGPT subscription | `PONG` |
+
+Each also probed streaming and non-streaming directly; all six emit the full
+Anthropic event vocabulary and a non-zero usage block.
+
+Claude Code prints an `unrecognized_model` warning for any id outside its own
+catalog and then assumes a 200k window, which caps auto-compact below what the
+model actually takes. A guessed `modelPicker`/`behavesAs` row did **not** settle
+it. Two things that did, both measured: the `[1m]` suffix on the model name, and
+`CLAUDE_CODE_MAX_CONTEXT_TOKENS`. The suffix never reaches a backend —
+`normalize_incoming_model` already strips it, so `gemini-3-flash[1m]` routes to
+gemini unchanged. Both are in the README now.
+
+## Upstream fixes sent to gemini-web-api
+
+https://github.com/FarisHijazi/gemini-web-api/pull/2 — neither bug is reachable
+on Linux, which is presumably why they survived:
+
+- `CHROME_DIR` was hardcoded to `~/.config/google-chrome`, so cookie discovery
+  globbed a path that does not exist on macOS and reported "No Gemini
+  credentials" — on a machine whose five Chrome profiles all had a valid
+  `__Secure-1PSID`.
+- `gemini-webapi` was `>=2.0.0` with `2.0.0` pinned only in `uv.lock`. `uvx`
+  ignores the lockfile, so the README's one-liner resolved 2.1.1, which renamed
+  the `Model.*_THINKING` tiers `config.py` maps. Measured with `uv pip compile`:
+  `>=2.0.0` resolves 2.1.1, `>=2.0.0,<2.1` resolves 2.0.0.
+
+The local checkout stays on that branch until the PR merges, because the server
+on `:8100` needs the fix on disk to restart.

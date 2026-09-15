@@ -133,6 +133,21 @@ settings for that one session:
 claude --settings '{"env":{"ANTHROPIC_BASE_URL":"http://localhost:18766"}}'
 ```
 
+### The unrecognized-model warning
+
+Claude Code only knows the context window of models in its own catalog, so a
+router model it has never heard of prints a warning and is assumed to hold
+200k tokens — which silently caps auto-compact below what the model can take.
+The reply itself is unaffected. Two measured ways to settle it:
+
+```sh
+claude --model 'gemini-3-flash[1m]'                                 # 1M window
+claude --settings '{"env":{"CLAUDE_CODE_MAX_CONTEXT_TOKENS":"1000000"}}'
+```
+
+The `[1m]` suffix is Claude Code's own and never reaches a backend — the router
+strips it while resolving the model.
+
 Added by this fork:
 
 | Variable | What it does |
