@@ -390,3 +390,65 @@ normally — so this is the subagent loop specifically, and it follows from the
 missing `tool_use`: the parent has no tool calls to drive and no terminating
 condition it recognises. Not worth working around; the backend is a delegate,
 not a worker.
+
+## Full-stack test pass
+
+Whole stack up, every login verified, run against the live services on
+`:18766` — `:18765` untouched throughout (pid 1178, 1d19h).
+
+| | |
+| --- | --- |
+| cursor-agent | logged in |
+| codex | `~/.codex/auth.json` present |
+| gemini | 5 Chrome cookie stores visible (presence only; values never read) |
+| claude | subscription login forwarded, never stored by the proxy |
+
+17/17 backend checks passed — stream, non-stream and `count_tokens` for each of
+`gemini-3-flash`, `gemini-3-pro`, `gpt-5.6-sol`, `cursor-cli-ask`,
+`cursor-cli-plan`, plus tool calling on both gemini models:
+
+```
+gemini-3-flash  stream       'PONG'  events=complete  ttfb=2.2s
+gemini-3-flash  tool call    tool_use=get_weather{'city': 'Paris'}  stop=tool_use
+gemini-3-pro    tool call    tool_use=get_weather{'city': 'Paris'}  stop=tool_use
+gpt-5.6-sol     non-stream   'PONG'  stop=end_turn  tok=12/6
+cursor-cli-ask  stream       'PONG'  events=complete  ttfb=10.8s
+cursor-cli-plan non-stream   'PONG'  stop=end_turn  tok=16400/49
+```
+
+Every stream emitted the complete Anthropic event vocabulary. cursor-cli's
+first byte lands ~11s in, against ~2s for gemini flash — the cost of spawning a
+`cursor-agent` per turn.
+
+Inbound auth, on a throwaway port with a token set: `/healthz` open (200), no
+key 401, wrong key 401, correct key 200, and correct key *alongside* an
+unrelated `Authorization` header 200 — the case that matters, because that
+header carries the Claude subscription token and must survive untouched.
+
+### Switching models mid-conversation
+
+The upstream feature this fork must not break. One conversation, a codeword set
+on the first turn, a different backend on each following turn — exactly what
+`/model` does, since Claude Code replays the whole history to whichever backend
+now owns the turn:
+
+```
+turn on gpt-5.6-sol     -> 'STORED'
+turn on gemini-3-flash  -> 'OKAPI-7731'
+turn on cursor-cli-ask  -> 'OKAPI-7731'
+turn on gemini-3-pro    -> 'OKAPI-7731'
+```
+
+A codeword set on the ChatGPT subscription was read back by Gemini's web
+session, then by the Cursor agent, then by Gemini again. Nothing in the fork
+touches the mechanism — new backends are just more ids in the same picker.
+
+## claude-code-router: skipped, nothing reused
+
+Recorded because the question came up twice. Its Gemini support is the official
+keyed protocol, which the no-paid-keys constraint rules out; reaching Gemini
+without a key still means gemini-web-api, so CCR would add a gateway rather than
+remove a dependency. It also treats CLI agents as clients, never as backends, so
+`cursor-cli` has no prior art there. The one thing it confirmed is that
+OpenAI-compatible → Anthropic translation is the standard shape for this — which
+is the shape already used here.
