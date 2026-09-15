@@ -580,3 +580,40 @@ Two findings worth keeping:
   serves — but it *"keeps an entry when its `id` contains `claude` or
   `anthropic` anywhere in the string… and ignores the rest"*. No `gemini-*`,
   `cursor-*` or `gpt-*` id can pass that filter, so the lineup is the mechanism.
+
+## Latency and throughput, and a measurement that lied
+
+Asked for gemini-3-pro's time-to-first-token and tokens/sec. The first pass,
+run by a subagent, reported **TTFT 94–269 s and 0.7–1.9 tok/s**, with one run
+failing outright. Those numbers are real but worthless: the run happened while
+`:18766` was being restarted to ship another change and while two other clients
+were hitting the same Google web session. The subagent even recorded the proxy
+"briefly refusing connections" — that was the restart, not instability.
+
+Re-measured on a quiet system, three runs:
+
+| model | TTFT | total | out tokens | end-to-end | deltas | shape |
+| --- | --- | --- | --- | --- | --- | --- |
+| gemini-3-pro | 3.83s | 4.54s | 202 (est) | 44.5 tok/s | 7 | one burst (<0.05s) |
+| gemini-3-flash | 3.62s | 4.27s | 191 (est) | 44.7 tok/s | 6 | one burst (0.02s) |
+| gpt-5.6-sol | 13.19s | 15.53s | 601 (real) | 38.7 tok/s | 137 | streams over 2.16s |
+
+Three points the numbers make that prose would not:
+
+1. **gemini-3-pro and -flash are indistinguishable on speed here** (3.8s vs
+   3.6s), because the wait is the web app's round trip, not the model.
+2. **Neither gemini model streams.** Seven deltas arriving inside 50 ms is a
+   buffer flushing over loopback. Codex's 137 deltas over 2.16 s is what
+   incremental generation looks like. So any "tok/s during the delta window"
+   figure for gemini (~300) is meaningless; the end-to-end number is the only
+   honest one.
+3. **The single Google web session is the fragility.** 3.8s quiet, 94–269s
+   contended, with `Stream suspended… No CID found to recover` upstream. One
+   session means concurrent conversations collide.
+
+Codex's 601 tokens against 783 visible characters is mostly reasoning: on
+visible text per second the order is flash ≈ pro ≈ 45, sol ≈ 12.6.
+
+Token counts for gemini are the proxy's char/4 estimate end to end — confirmed
+by `usage.output_tokens == len(text) // 4` exactly (811 chars → 202). Codex
+reports real usage.
