@@ -1,7 +1,9 @@
+pub mod accumulate;
 pub mod error;
 pub mod schema;
 pub mod sse;
 
+pub use self::accumulate::accumulate_response;
 pub use self::error::{ErrorDetail, ErrorEnvelope, json_error};
 pub use self::schema::{CountTokensResponse, Message, MessagesRequest};
 pub use self::sse::{

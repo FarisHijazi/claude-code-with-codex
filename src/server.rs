@@ -1,5 +1,6 @@
 use crate::{
     anthropic::json_error,
+    inbound_auth::{InboundAuth, require_auth},
     logging::{Logger, REDACT_KEYS, create_logger},
     monitor::{EndpointKind, MonitorHandle},
     openai_compat::{
@@ -167,6 +168,7 @@ pub async fn serve_listener(
             ),
         ])),
     );
+    warn_if_exposed_without_auth(&local_addr.ip().to_string());
     let app = app_with_monitor(Arc::new(Registry::with_default_alias()), monitor);
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown)
@@ -288,7 +290,32 @@ pub fn app_with_features(
     } else {
         router
     };
-    router.fallback(fallback_handler).with_state(state)
+    let router = router.fallback(fallback_handler).with_state(state);
+    apply_inbound_auth(router, InboundAuth::from_config())
+}
+
+/// A proxy reachable from off-box with no credential is the one combination
+/// worth saying out loud; loopback-only (the default) stays quiet.
+fn warn_if_exposed_without_auth(bind_ip: &str) {
+    if crate::config::is_loopback_bind(bind_ip) || InboundAuth::from_config().is_enabled() {
+        return;
+    }
+    create_logger("server").warn(
+        "proxy is reachable beyond loopback with no inbound auth; set CCP_AUTH_TOKEN to require a credential",
+        Some(serde_json::Map::from_iter([(
+            "bindAddress".to_string(),
+            json!(bind_ip),
+        )])),
+    );
+}
+
+/// Wrap the router in the proxy credential check. When no token is configured
+/// the router is returned untouched, so the default path adds no layer at all.
+fn apply_inbound_auth(router: Router, auth: InboundAuth) -> Router {
+    if !auth.is_enabled() {
+        return router;
+    }
+    router.layer(axum::middleware::from_fn_with_state(auth, require_auth))
 }
 
 #[derive(Clone)]

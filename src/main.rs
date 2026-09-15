@@ -66,6 +66,17 @@ enum Commands {
         #[command(subcommand)]
         command: ProviderGroup,
     },
+    /// Check the Gemini backend (gemini-web-api)
+    Gemini {
+        #[command(subcommand)]
+        command: ProviderGroup,
+    },
+    /// Check the cursor-agent CLI backend
+    #[command(name = "cursor-cli")]
+    CursorCli {
+        #[command(subcommand)]
+        command: ProviderGroup,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -165,6 +176,8 @@ fn main() -> Result<()> {
         Commands::Kimi { command } => run_provider_cli("kimi", command),
         Commands::Cursor { command } => run_provider_cli("cursor", command),
         Commands::Grok { command } => run_provider_cli("grok", command),
+        Commands::Gemini { command } => run_provider_cli("gemini", command),
+        Commands::CursorCli { command } => run_provider_cli("cursor-cli", command),
     }
 }
 
@@ -219,13 +232,49 @@ fn run_provider_cli(name: &str, command: ProviderGroup) -> Result<()> {
     }
 }
 
+/// Backends whose id lists are long enough that printing them in full buries
+/// the rest of the banner. cursor-cli is not one: it advertises three ids and
+/// accepts any model after the colon.
+fn is_compactable(provider: &str) -> bool {
+    matches!(provider, "cursor")
+}
+
+/// Upstream's display order, kept verbatim so the banner reads the same as it
+/// always has. Backends this fork adds are appended after it rather than
+/// interleaved alphabetically.
+const DISPLAY_ORDER: &[&str] = &["codex", "kimi", "grok", "cursor"];
+
+/// Providers to print, in display order: the known ones first, then anything
+/// else the registry holds, so a new backend appears without having to be
+/// listed in a second place.
+fn display_providers(registry: &Registry) -> Vec<String> {
+    let grouped = registry.grouped_models();
+    let mut out: Vec<String> = DISPLAY_ORDER
+        .iter()
+        .filter(|name| grouped.contains_key(**name))
+        .map(|name| (*name).to_string())
+        .collect();
+    for provider in grouped.keys() {
+        // The anthropic passthrough is omitted: its ids are Claude Code's own
+        // aliases, which it already knows.
+        if provider == "anthropic" || out.iter().any(|known| known == provider) {
+            continue;
+        }
+        out.push(provider.clone());
+    }
+    out
+}
+
 fn print_models(registry: &Registry, full: bool) {
     let grouped = registry.grouped_models();
-    for provider in ["codex", "kimi", "grok", "cursor"] {
-        let Some(models) = grouped.get(provider) else {
+    for provider in display_providers(registry) {
+        let Some(models) = grouped.get(&provider) else {
             continue;
         };
-        if full || provider != "cursor" {
+        if models.is_empty() {
+            continue;
+        }
+        if full || !is_compactable(&provider) {
             println!("{provider}: {}", models.join(", "));
         } else {
             println!("{provider}: {}", compact_cursor_list(models));

@@ -50,6 +50,7 @@ pub(crate) const CODEX_MODELS: &[&str] = &[
 ];
 
 pub(crate) const KIMI_MODELS: &[&str] = &["kimi-for-coding", "kimi-k2.6", "kimi-k3", "k2.6", "k3"];
+pub(crate) use crate::providers::gemini::models::GEMINI_MODELS;
 pub(crate) const GROK_MODELS: &[&str] = &["grok-composer-2.5-fast", "grok-4.5"];
 
 pub struct Registry {
@@ -75,6 +76,16 @@ impl Registry {
         );
         models.insert("cursor".into(), build_cursor_models());
         models.insert(
+            "gemini".into(),
+            GEMINI_MODELS.iter().map(|m| (*m).to_string()).collect(),
+        );
+        // Discovered from `cursor-agent --list-models`, so this list reflects
+        // whatever the installed CLI actually offers.
+        models.insert(
+            "cursor-cli".into(),
+            crate::providers::cursor_cli::models::supported_models(),
+        );
+        models.insert(
             "grok".into(),
             GROK_MODELS
                 .iter()
@@ -88,6 +99,8 @@ impl Registry {
                 "codex" => Arc::new(crate::providers::codex::CodexProvider::new()),
                 "kimi" => Arc::new(crate::providers::kimi::KimiProvider::new()),
                 "cursor" => Arc::new(crate::providers::cursor::CursorProvider::new()),
+                "cursor-cli" => Arc::new(crate::providers::cursor_cli::CursorCliProvider::new()),
+                "gemini" => Arc::new(crate::providers::gemini::GeminiProvider::new()),
                 "grok" => Arc::new(crate::providers::grok::GrokProvider::new()),
                 _ => Arc::new(PlaceholderProvider::new(name, entries.clone())),
             };
@@ -179,6 +192,11 @@ impl Registry {
         if is_anthropic_alias(&normalized) || normalized.starts_with("claude-") {
             return self.handlers.get(self.alias_provider.as_str()).cloned();
         }
+        // Checked before the API-backed cursor backend so a `cursor-cli*` id
+        // can never be swallowed by a `cursor*` prefix match.
+        if crate::providers::cursor_cli::models::is_cursor_cli_model(&normalized) {
+            return self.handlers.get("cursor-cli").cloned();
+        }
         if is_cursor_model(&normalized) {
             return self.handlers.get("cursor").cloned();
         }
@@ -242,6 +260,8 @@ impl PlaceholderProvider {
             "codex" => "codex",
             "kimi" => "kimi",
             "cursor" => "cursor",
+            "cursor-cli" => "cursor-cli",
+            "gemini" => "gemini",
             "grok" => "grok",
             _ => "codex",
         };
@@ -264,6 +284,8 @@ impl Provider for PlaceholderProvider {
             "codex" => &CODEX_CLI,
             "kimi" => &KIMI_CLI,
             "cursor" => &CURSOR_CLI,
+            "cursor-cli" => &CURSOR_CLI_PLACEHOLDER,
+            "gemini" => &GEMINI_PLACEHOLDER,
             "grok" => &GROK_CLI,
             _ => &CODEX_CLI,
         }
@@ -324,6 +346,10 @@ const CODEX_CLI: PlaceholderCli = PlaceholderCli { provider: "codex" };
 const KIMI_CLI: PlaceholderCli = PlaceholderCli { provider: "kimi" };
 const CURSOR_CLI: PlaceholderCli = PlaceholderCli { provider: "cursor" };
 const GROK_CLI: PlaceholderCli = PlaceholderCli { provider: "grok" };
+const CURSOR_CLI_PLACEHOLDER: PlaceholderCli = PlaceholderCli {
+    provider: "cursor-cli",
+};
+const GEMINI_PLACEHOLDER: PlaceholderCli = PlaceholderCli { provider: "gemini" };
 fn expand_codex_models() -> Vec<String> {
     let mut set = HashSet::new();
     let mut out = Vec::new();

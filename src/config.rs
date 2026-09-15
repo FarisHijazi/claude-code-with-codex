@@ -45,7 +45,11 @@ struct FileConfig {
     pub kimi: Option<KimiConfig>,
     pub codex: Option<CodexConfig>,
     pub cursor: Option<CursorConfig>,
+    #[serde(rename = "cursorCli")]
+    pub cursor_cli: Option<CursorCliConfig>,
+    pub gemini: Option<GeminiConfig>,
     pub grok: Option<GrokConfig>,
+    pub auth: Option<AuthConfig>,
 }
 
 #[derive(Deserialize, Clone)]
@@ -87,6 +91,39 @@ struct CursorConfig {
     pub client_version: Option<String>,
     #[serde(rename = "agentBundle")]
     pub agent_bundle: Option<String>,
+}
+
+#[derive(Deserialize, Clone)]
+struct AuthConfig {
+    /// Inbound proxy token. Absent or blank leaves the proxy unauthenticated.
+    pub token: Option<String>,
+    /// Path to a file holding the token, so it need not sit in config.json.
+    #[serde(rename = "tokenFile")]
+    pub token_file: Option<String>,
+}
+
+#[derive(Deserialize, Clone)]
+struct GeminiConfig {
+    #[serde(rename = "baseUrl")]
+    pub base_url: Option<String>,
+    #[serde(rename = "apiKey")]
+    pub api_key: Option<String>,
+}
+
+#[derive(Deserialize, Clone)]
+struct CursorCliConfig {
+    /// Path to the cursor-agent binary.
+    pub binary: Option<String>,
+    /// Allow the `cursor-cli-agent:` prefix to run with write access.
+    #[serde(rename = "allowWrite")]
+    pub allow_write: Option<bool>,
+    /// Seconds before a cursor-agent run is killed.
+    #[serde(rename = "timeoutSecs")]
+    pub timeout_secs: Option<u64>,
+    /// Working directory for cursor-agent runs. Defaults to the proxy's cwd.
+    pub workspace: Option<String>,
+    #[serde(rename = "defaultModel")]
+    pub default_model: Option<String>,
 }
 
 #[derive(Deserialize, Clone)]
@@ -828,6 +865,165 @@ pub fn cursor_agent_bundle() -> Option<String> {
         return Some(bundle);
     }
     None
+}
+
+// ---------------------------------------------------------------------------
+// Inbound proxy auth
+// ---------------------------------------------------------------------------
+
+/// Token required on inbound `/v1/*` requests. `None` leaves the proxy open,
+/// which is the default and preserves existing deployments.
+pub fn inbound_auth_token() -> Option<String> {
+    let env: HashMap<_, _> = std::env::vars().collect();
+    if let Some(raw) = env.get("CCP_AUTH_TOKEN") {
+        return non_blank(raw.clone());
+    }
+    if let Some(path) = env.get("CCP_AUTH_TOKEN_FILE")
+        && let Some(token) = read_token_file(Path::new(path))
+    {
+        return Some(token);
+    }
+    let config_dir = paths::config_dir();
+    let file = read_file_config(&config_dir)?;
+    let auth = file.auth?;
+    if let Some(token) = auth.token.and_then(non_blank) {
+        return Some(token);
+    }
+    auth.token_file
+        .as_deref()
+        .and_then(|path| read_token_file(Path::new(path)))
+}
+
+fn non_blank(value: String) -> Option<String> {
+    let trimmed = value.trim();
+    (!trimmed.is_empty()).then(|| trimmed.to_string())
+}
+
+fn read_token_file(path: &Path) -> Option<String> {
+    fs::read_to_string(path).ok().and_then(non_blank)
+}
+
+/// True when the bind address accepts connections from outside this machine.
+pub fn is_loopback_bind(bind_address: &str) -> bool {
+    bind_address
+        .parse::<std::net::IpAddr>()
+        .map(|ip| ip.is_loopback())
+        .unwrap_or(false)
+}
+
+// ---------------------------------------------------------------------------
+// Gemini config (gemini-web-api, OpenAI-compatible)
+// ---------------------------------------------------------------------------
+
+pub fn gemini_base_url() -> String {
+    let env: HashMap<_, _> = std::env::vars().collect();
+    if let Some(raw) = env.get("CCP_GEMINI_BASE_URL") {
+        return raw.clone();
+    }
+    let config_dir = paths::config_dir();
+    if let Some(file) = read_file_config(&config_dir)
+        && let Some(gemini) = file.gemini
+        && let Some(url) = gemini.base_url
+    {
+        return url;
+    }
+    "http://localhost:8100/v1".to_string()
+}
+
+/// Optional key for the gemini-web-api server. That server accepts any value by
+/// default, so this is only needed when it is deployed behind its own auth.
+pub fn gemini_api_key() -> Option<String> {
+    let env: HashMap<_, _> = std::env::vars().collect();
+    if let Some(raw) = env.get("CCP_GEMINI_API_KEY") {
+        return non_blank(raw.clone());
+    }
+    let config_dir = paths::config_dir();
+    read_file_config(&config_dir)?
+        .gemini?
+        .api_key
+        .and_then(non_blank)
+}
+
+// ---------------------------------------------------------------------------
+// cursor-agent CLI config
+// ---------------------------------------------------------------------------
+
+pub fn cursor_cli_binary() -> String {
+    let env: HashMap<_, _> = std::env::vars().collect();
+    if let Some(raw) = env.get("CCP_CURSOR_CLI_BINARY") {
+        return raw.clone();
+    }
+    let config_dir = paths::config_dir();
+    if let Some(file) = read_file_config(&config_dir)
+        && let Some(cursor_cli) = file.cursor_cli
+        && let Some(binary) = cursor_cli.binary
+    {
+        return binary;
+    }
+    "cursor-agent".to_string()
+}
+
+/// Gate on write access. `cursor-agent` runs its own tools, so a write-enabled
+/// run can edit the workspace; that stays opt-in.
+pub fn cursor_cli_allow_write() -> bool {
+    let env: HashMap<_, _> = std::env::vars().collect();
+    if let Some(raw) = env.get("CCP_CURSOR_CLI_ALLOW_WRITE") {
+        return matches!(
+            raw.trim().to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes" | "on"
+        );
+    }
+    let config_dir = paths::config_dir();
+    if let Some(file) = read_file_config(&config_dir)
+        && let Some(cursor_cli) = file.cursor_cli
+        && let Some(allow) = cursor_cli.allow_write
+    {
+        return allow;
+    }
+    false
+}
+
+pub fn cursor_cli_timeout_secs() -> u64 {
+    let env: HashMap<_, _> = std::env::vars().collect();
+    if let Some(raw) = env.get("CCP_CURSOR_CLI_TIMEOUT_SECS")
+        && let Ok(parsed) = raw.trim().parse::<u64>()
+        && parsed > 0
+    {
+        return parsed;
+    }
+    let config_dir = paths::config_dir();
+    if let Some(file) = read_file_config(&config_dir)
+        && let Some(cursor_cli) = file.cursor_cli
+        && let Some(secs) = cursor_cli.timeout_secs
+        && secs > 0
+    {
+        return secs;
+    }
+    900
+}
+
+pub fn cursor_cli_workspace() -> Option<String> {
+    let env: HashMap<_, _> = std::env::vars().collect();
+    if let Some(raw) = env.get("CCP_CURSOR_CLI_WORKSPACE") {
+        return non_blank(raw.clone());
+    }
+    let config_dir = paths::config_dir();
+    read_file_config(&config_dir)?
+        .cursor_cli?
+        .workspace
+        .and_then(non_blank)
+}
+
+pub fn cursor_cli_default_model() -> Option<String> {
+    let env: HashMap<_, _> = std::env::vars().collect();
+    if let Some(raw) = env.get("CCP_CURSOR_CLI_DEFAULT_MODEL") {
+        return non_blank(raw.clone());
+    }
+    let config_dir = paths::config_dir();
+    read_file_config(&config_dir)?
+        .cursor_cli?
+        .default_model
+        .and_then(non_blank)
 }
 
 #[cfg(test)]
