@@ -11,6 +11,7 @@ use tokio::io::AsyncReadExt;
 use tokio::process::{Child, ChildStdout, Command};
 
 use super::models::{AgentMode, ParsedModel};
+use crate::anthropic::schema::MessagesRequest;
 
 #[derive(Debug, Clone)]
 pub struct RunOptions {
@@ -22,12 +23,14 @@ pub struct RunOptions {
 }
 
 impl RunOptions {
-    pub fn from_config(parsed: &ParsedModel) -> Self {
+    /// The configured workspace, or the one the request states — see
+    /// [`super::workspace`] for why a request may pick it at all.
+    pub fn from_request(parsed: &ParsedModel, req: &MessagesRequest) -> Self {
         Self {
             binary: crate::config::cursor_cli_binary(),
             model: parsed.model.clone(),
             mode: parsed.mode,
-            workspace: crate::config::cursor_cli_workspace(),
+            workspace: super::workspace::resolve(req),
             timeout: Duration::from_secs(crate::config::cursor_cli_timeout_secs()),
         }
     }

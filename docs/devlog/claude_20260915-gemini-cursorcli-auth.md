@@ -229,3 +229,53 @@ part of this review: it folds an Anthropic SSE stream into a Messages JSON and
 is not gemini-specific. `cursor-cli` was reaching across into the gemini module
 for it, which was wrong regardless, and it also means the gemini backend can be
 removed cleanly if that is the call.
+
+## Follow-up: cursor-cli now follows the caller
+
+The first cut left `cursor-agent` in a fixed directory, which made it close to
+useless for coding — the caller's files were never there. The fix needed one
+fact I did not have: what Claude Code actually puts in its prompt.
+
+Rather than guess, I captured it. A throwaway HTTP server that dumps the request
+body and returns a minimal Messages reply, then a one-shot `claude -p` pointed at
+it. The 191 KB body settled two things:
+
+1. The environment block is **not** in the `system` field. It arrives as a
+   message with `role: "system"`, and the line reads
+   `- Primary working directory: /abs/path`.
+2. `ANTHROPIC_BASE_URL=... claude` **does not work** when
+   `~/.claude/settings.json` sets it — the first attempt went to the configured
+   router on `:18765` and never reached the dump server. The settings file wins
+   over the process environment. `claude --settings '{"env":{...}}'` does
+   override, which is how a second router gets exercised without editing a file
+   every other running session reads.
+
+`src/providers/cursor_cli/workspace.rs` scans the conversation newest-first for
+that marker (and the older `<env>`/`Working directory:` phrasing), requiring a
+whole-line match on an absolute path that exists — documentation quoting the
+marker, this devlog included, must not be mistaken for the real thing. A
+configured `cursorCli.workspace` still takes precedence.
+
+### `--workspace` is not a sandbox
+
+Worth stating plainly, because the first version of the module doc claimed
+otherwise. A second instance was started on a spare port with
+`CCP_CURSOR_CLI_WORKSPACE` pinned to an unrelated directory and sent the same
+request. The agent started in the pinned directory — precedence works — and then
+read the absolute path out of the prompt anyway:
+
+```
+> read .../ws-probe/secret_marker.txt
+> read .../pinned-elsewhere/secret_marker.txt
+ZUCCHINI-4471
+```
+
+So the pin chooses where a run *starts*, nothing more. Containment is the mode
+(`ask` and `plan` cannot write, proven earlier in this log) and the file
+permissions of the user the proxy runs as. The doc comment was corrected to say
+so.
+
+End-to-end, against the live fork on `:18766`: a request whose env block named a
+scratch project got back `ZUCCHINI-4471`, read from a file that exists only
+there. Six unit tests cover the marker forms, the freshest-block rule, and the
+two rejections (relative paths, prose).

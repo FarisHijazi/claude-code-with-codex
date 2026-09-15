@@ -23,6 +23,7 @@ pub mod events;
 pub mod models;
 pub mod process;
 pub mod prompt;
+pub mod workspace;
 
 use std::convert::Infallible;
 use std::time::Duration;
@@ -110,7 +111,7 @@ impl Provider for CursorCliProvider {
             monitor.model_resolved(&ctx.req_id, &parsed.model);
         }
 
-        let options = RunOptions::from_config(&parsed);
+        let options = RunOptions::from_request(&parsed, &body);
         let prompt = render_prompt(&body);
         if let Some(traffic) = ctx.traffic.as_ref() {
             traffic.write_bytes("020-cursor-cli-prompt.txt", prompt.as_bytes());
@@ -196,7 +197,7 @@ impl Provider for CursorCliProvider {
         let requested = body.model.as_deref().unwrap_or("cursor-cli");
         let parsed = parse_model(requested);
         check_write_permission(&parsed)?;
-        let options = RunOptions::from_config(&parsed);
+        let options = RunOptions::from_request(&parsed, &body);
         let prompt = render_prompt(&body);
         let agent = spawn(&options, &prompt).map_err(|error| {
             ProviderError::new(

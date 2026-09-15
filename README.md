@@ -121,6 +121,18 @@ Claude Code after changing it so `/model` discovers the router's model list.
 | `ANTHROPIC_MODEL`                          | Optionally force one model for the whole session.                |
 | `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` | Set to `1` to skip Claude Code's non-essential background calls. |
 
+### Pointing one session somewhere else
+
+`~/.claude/settings.json` wins over the process environment, so
+`ANTHROPIC_BASE_URL=... claude` silently does nothing once that file sets it —
+the session goes to the configured router anyway. To try a second router
+without disturbing sessions already running against the first, override the
+settings for that one session:
+
+```sh
+claude --settings '{"env":{"ANTHROPIC_BASE_URL":"http://localhost:18766"}}'
+```
+
 Added by this fork:
 
 | Variable | What it does |
@@ -131,7 +143,7 @@ Added by this fork:
 | `CCP_GEMINI_API_KEY` | Key for that server, if it is deployed behind its own auth. |
 | `CCP_CURSOR_CLI_BINARY` | Path to `cursor-agent`. Default: found on `PATH`. |
 | `CCP_CURSOR_CLI_ALLOW_WRITE` | `1` lets `cursor-cli-agent:` edit files. Default off. |
-| `CCP_CURSOR_CLI_WORKSPACE` | Directory `cursor-agent` runs in. Default: the proxy's cwd. |
+| `CCP_CURSOR_CLI_WORKSPACE` | Pin `cursor-agent` to one directory. Default: follow the caller's cwd. |
 | `CCP_CURSOR_CLI_TIMEOUT_SECS` | Kill a run after this long. Default `900`. |
 | `CCP_CURSOR_CLI_DEFAULT_MODEL` | Model for bare `cursor-cli`. Default `auto`. |
 
@@ -217,11 +229,16 @@ The model id carries the execution mode:
 Code — Cursor offers a few hundred models and listing every combination would
 bury the `/model` picker — but any of them routes.
 
-**It runs in one fixed directory.** Claude Code does not send its working
-directory in an Anthropic request, so the proxy cannot follow you from project
-to project: `cursor-agent` runs in `cursorCli.workspace`, or in whatever
-directory the proxy itself was started in. Point it at the project you want, or
-run a proxy per project on its own port.
+**It follows the project you have open.** An Anthropic request has no working
+directory field, but Claude Code states its cwd in the environment block it
+prepends to the conversation, and the proxy reads it back out — so one proxy
+serves every project. Set `cursorCli.workspace` to pin every run to one
+directory instead.
+
+Note what that pin is: `--workspace` chooses where the agent *starts*, not what
+it may touch. An agent given an absolute path in the prompt will read it even
+from a pinned instance. What actually contains a run is the mode — `ask` and
+`plan` cannot write — and the file permissions of the user the proxy runs as.
 
 **This backend is an agent, not a model.** `cursor-agent` runs its own tool loop
 in its own workspace, so Claude Code's tools are not advertised and no

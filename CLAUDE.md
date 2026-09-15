@@ -71,11 +71,15 @@ any of the three.
    by both new backends, as is `anthropic::accumulate_response` (SSE -> one
    Messages JSON), which every streaming backend needs for its non-streaming
    path.
-7. **`cursor-cli` has one fixed workspace.** An Anthropic request carries no
-   working directory, so the agent runs in `cursorCli.workspace` or the
-   proxy's own cwd — not the project Claude Code is open in. Claude Code does
-   put its cwd in the system prompt's env block, so auto-detection is possible,
-   but it has not been verified against real traffic and is not implemented.
+7. **`cursor-cli` follows the caller, and `--workspace` is not a sandbox.**
+   An Anthropic request carries no working directory, so
+   `cursor_cli::workspace` reads it out of the environment block Claude Code
+   prepends (`- Primary working directory: <path>`, captured off real traffic).
+   A configured `cursorCli.workspace` still wins. But a pinned instance was
+   measured reading an absolute path handed to it in the prompt, outside the
+   pin: `--workspace` sets where the agent *starts*, not what it may touch.
+   Containment is the mode (`ask`/`plan` cannot write) and the proxy user's own
+   file permissions.
 8. **`gemini` overlaps with `claude-code-router`**, which routes to any
    OpenAI-compatible endpoint from config. It is kept to avoid running a second
    gateway alongside the Claude/Codex subscription logic here — see the devlog
