@@ -180,6 +180,10 @@ Then `/model gemini-3-pro` inside Claude Code. Ids: `gemini-3-pro`,
 There is no separate login: the Google session lives in the gemini-web-api
 server, so `auth status` reports whether that server is reachable.
 
+That server sends no usage in its stream, so token counts for gemini turns are
+estimated with the same estimator `/v1/messages/count_tokens` uses. A backend
+that does report usage keeps its exact numbers.
+
 Because the base URL is configurable, this backend also works against any other
 OpenAI-compatible server (Ollama, LM Studio, OpenRouter):
 

@@ -44,7 +44,7 @@ use crate::provider::{
 use self::client::{GeminiClient, GeminiError};
 use self::models::{GEMINI_DEFAULT_MODEL, GEMINI_MODELS, assert_allowed_model, resolve_model};
 use self::translate::request::translate_request;
-use self::translate::stream::{StreamTranslator, translate_stream_bytes};
+use self::translate::stream::StreamTranslator;
 
 pub struct GeminiProvider;
 
@@ -110,6 +110,10 @@ impl Provider for GeminiProvider {
     async fn handle_messages(&self, body: MessagesRequest, ctx: RequestContext) -> Response {
         let want_stream = body.stream;
         let message_id = format!("msg_{}", uuid::Uuid::new_v4().simple());
+        // gemini-web-api reports no usage, so carry an estimate for the
+        // translator to fall back on. Same estimator as /count_tokens, so the
+        // two agree.
+        let estimated_input_tokens = crate::providers::kimi::count_tokens::count_tokens(&body);
 
         let (resolved, mut translated) = match Self::prepare(&body, &ctx) {
             Ok(prepared) => prepared,
@@ -150,6 +154,7 @@ impl Provider for GeminiProvider {
                 Box::pin(upstream.into_stream()),
                 message_id,
                 resolved,
+                estimated_input_tokens,
                 ctx.monitor.clone(),
                 ctx.req_id.clone(),
             );
@@ -162,7 +167,10 @@ impl Provider for GeminiProvider {
         if let Some(traffic) = ctx.traffic.as_ref() {
             traffic.write_bytes("032-upstream-response-body.sse", &bytes);
         }
-        let sse = translate_stream_bytes(&bytes, &message_id, &resolved);
+        let mut translator = StreamTranslator::new(&message_id, &resolved)
+            .with_fallback_input_tokens(estimated_input_tokens);
+        let mut sse = translator.push_bytes(&bytes);
+        translator.finish(&mut sse);
         match accumulate_response(&sse, &message_id, &resolved) {
             Ok(value) => {
                 if let Some(monitor) = ctx.monitor.as_ref() {
@@ -231,7 +239,10 @@ impl Provider for GeminiProvider {
         if let Some(traffic) = ctx.traffic.as_ref() {
             traffic.write_bytes("032-upstream-response-body.sse", &bytes);
         }
-        let sse = translate_stream_bytes(&bytes, &message_id, &resolved);
+        let mut translator = StreamTranslator::new(&message_id, &resolved)
+            .with_fallback_input_tokens(crate::providers::kimi::count_tokens::count_tokens(&body));
+        let mut sse = translator.push_bytes(&bytes);
+        translator.finish(&mut sse);
         if let Some(traffic) = ctx.traffic.as_ref() {
             traffic.write_bytes("050-anthropic-intermediate.sse", &sse);
         }
@@ -260,6 +271,7 @@ fn stream_anthropic_response<S>(
     upstream: S,
     message_id: String,
     model: String,
+    fallback_input_tokens: u64,
     monitor: Option<MonitorHandle>,
     req_id: String,
 ) -> Response
@@ -278,7 +290,8 @@ where
     // `unfold` owns the upstream for the life of the response body.
     let state = State {
         upstream,
-        translator: StreamTranslator::new(message_id, model),
+        translator: StreamTranslator::new(message_id, model)
+            .with_fallback_input_tokens(fallback_input_tokens),
         monitor,
         req_id,
         started: false,

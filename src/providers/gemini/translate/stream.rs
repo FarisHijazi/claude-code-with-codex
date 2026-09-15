@@ -42,6 +42,9 @@ struct Usage {
     output_tokens: u64,
 }
 
+/// Rough characters-per-token, matching the estimator the other backends use.
+const CHARS_PER_TOKEN: u64 = 4;
+
 /// Incremental OpenAI-SSE -> Anthropic-SSE translator.
 pub struct StreamTranslator {
     message_id: String,
@@ -54,6 +57,13 @@ pub struct StreamTranslator {
     /// correlates argument fragments with the call they belong to.
     tools: Vec<(u64, ToolBlock)>,
     usage: Usage,
+    /// Estimate used when the upstream reports no usage at all.
+    ///
+    /// gemini-web-api's stream carries no usage chunk and has no
+    /// `stream_options.include_usage`, so without this every gemini turn would
+    /// report 0/0 and Claude Code would believe the context was empty.
+    fallback_input_tokens: u64,
+    output_chars: u64,
     stop_reason: Option<String>,
     finished: bool,
 }
@@ -69,9 +79,17 @@ impl StreamTranslator {
             next_index: 0,
             tools: Vec::new(),
             usage: Usage::default(),
+            fallback_input_tokens: 0,
+            output_chars: 0,
             stop_reason: None,
             finished: false,
         }
+    }
+
+    /// Supply the prompt-size estimate to report if the upstream sends none.
+    pub fn with_fallback_input_tokens(mut self, tokens: u64) -> Self {
+        self.fallback_input_tokens = tokens;
+        self
     }
 
     /// Feed raw upstream bytes; returns whatever Anthropic SSE is now complete.
@@ -244,6 +262,9 @@ impl StreamTranslator {
                 index
             }
         };
+        self.output_chars = self
+            .output_chars
+            .saturating_add(text.chars().count() as u64);
         let data = json!({
             "type": "content_block_delta",
             "index": index,
@@ -356,12 +377,25 @@ impl StreamTranslator {
         }
         .to_string();
 
+        // Only estimate what the upstream did not report, so a server that
+        // does send usage keeps its exact numbers.
+        let input_tokens = if self.usage.input_tokens == 0 {
+            self.fallback_input_tokens
+        } else {
+            self.usage.input_tokens
+        };
+        let output_tokens = if self.usage.output_tokens == 0 && self.output_chars > 0 {
+            (self.output_chars / CHARS_PER_TOKEN).max(1)
+        } else {
+            self.usage.output_tokens
+        };
+
         let data = json!({
             "type": "message_delta",
             "delta": { "stop_reason": stop_reason, "stop_sequence": null },
             "usage": {
-                "input_tokens": self.usage.input_tokens,
-                "output_tokens": self.usage.output_tokens
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens
             }
         });
         self.emit(out, "message_delta", &data);
@@ -381,8 +415,11 @@ fn map_stop_reason(reason: &str) -> &'static str {
     }
 }
 
-/// Translate a complete upstream body in one call. Used by tests and by the
-/// non-streaming path.
+/// Translate a complete upstream body in one call.
+///
+/// Test helper only: both real paths drive [`StreamTranslator`] directly so
+/// they can supply the usage fallback.
+#[cfg(test)]
 pub fn translate_stream_bytes(input: &[u8], message_id: &str, model: &str) -> Vec<u8> {
     let mut translator = StreamTranslator::new(message_id, model);
     let mut out = translator.push_bytes(input);
@@ -593,6 +630,48 @@ mod tests {
             names(&sse),
             vec!["message_start", "message_delta", "message_stop"]
         );
+    }
+
+    /// gemini-web-api sends no usage chunk; 0/0 would make Claude Code think
+    /// the context was empty.
+    #[test]
+    fn missing_usage_falls_back_to_an_estimate() {
+        let upstream = concat!(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"12345678\"}}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: [DONE]\n\n",
+        );
+        let mut translator =
+            StreamTranslator::new("msg_u", "gemini-3-pro").with_fallback_input_tokens(123);
+        let mut out = translator.push_bytes(upstream.as_bytes());
+        translator.finish(&mut out);
+        let (_, delta) = events(&out)
+            .into_iter()
+            .find(|(name, _)| name == "message_delta")
+            .expect("message_delta");
+        assert_eq!(delta["usage"]["input_tokens"], 123);
+        // 8 characters at ~4 chars/token.
+        assert_eq!(delta["usage"]["output_tokens"], 2);
+    }
+
+    /// A server that does report usage must keep its exact numbers.
+    #[test]
+    fn reported_usage_is_never_overwritten_by_the_estimate() {
+        let upstream = concat!(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"hello there\"}}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":11,\"completion_tokens\":3}}\n\n",
+            "data: [DONE]\n\n",
+        );
+        let mut translator =
+            StreamTranslator::new("msg_u2", "gemini-3-pro").with_fallback_input_tokens(999);
+        let mut out = translator.push_bytes(upstream.as_bytes());
+        translator.finish(&mut out);
+        let (_, delta) = events(&out)
+            .into_iter()
+            .find(|(name, _)| name == "message_delta")
+            .expect("message_delta");
+        assert_eq!(delta["usage"]["input_tokens"], 11);
+        assert_eq!(delta["usage"]["output_tokens"], 3);
     }
 
     #[test]
