@@ -201,12 +201,20 @@ The `Agent` tool's own `model` override is a fixed enum and cannot reach these
 ids, so an ad-hoc *"spawn a gemini subagent"* with no definition file falls back
 to a Claude model — the definition file is what makes it stick.
 
-**`cursor-cli` is a poor fit for a subagent.** It never returns a `tool_use`
-block; it runs its own tool loop and hands back prose (see below), so a subagent
-on it cannot use the tool list you gave it and cannot be held to the parent's
-permission mode. Sent a request carrying a `Bash` tool it ignored the tool,
-ran the command with its own shell, and replied in text. Use it as a model you
-delegate a whole task to, not as a subagent worker.
+**`cursor-cli` does not work as a subagent.** It routes — Claude Code reports
+`agent:custom:<name>` against `cursor-cli-ask`, and `cursor-agent --mode ask`
+processes do spawn — but no run has ever handed a result back. Three attempts,
+two agent shapes (one with `tools: Bash`, one with `tools: []`): each looped
+through repeated `cursor-agent` invocations for 8+ minutes and had to be stopped.
+
+The cause is structural, not a routing bug. `cursor-cli` never returns a
+`tool_use` block — given a request carrying a `Bash` tool it ignored the tool,
+ran the command with its own shell, and replied in prose. A subagent on it can
+neither use the tool list it was handed nor be held to the parent's permission
+mode, so the parent's agent loop has nothing to drive and never terminates.
+
+Use `cursor-cli` as a model you select for a turn and delegate the whole task
+to. Not as a subagent.
 
 ## Other backends
 

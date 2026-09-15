@@ -330,7 +330,7 @@ Measured, in a scratch project with `.claude/agents/*.md`:
 | --- | --- | --- |
 | `gemini-probe` | `gemini-3-flash` | returned its token; 3 requests landed on gemini-web-api during the run |
 | `gemini-tool-probe` | `gemini-3-pro` | ran a real Claude Code tool loop (2 tool calls), returned the file contents |
-| `cursor-probe` | `cursor-cli-ask` | spawned and routed, but no handback — see below |
+| `cursor-probe` | `cursor-cli-ask` | routed, never handed back — see below |
 
 The proof that routing is real, rather than a silent fallback to a Claude model,
 is Claude Code's own telemetry line: `{"model":"gemini-3-flash",
@@ -375,3 +375,18 @@ to run `echo SIDE-EFFECT > created_by_shell.txt` it refused:
 and the directory was byte-identical afterwards. So `ask` is "may read anything
 the proxy user can read", not "runs nothing", and the write block is enforced on
 shell redirects, not only on the edit tools.
+
+Three cursor-cli subagent runs were attempted across two agent shapes — one with
+`tools: Bash`, one with `tools: []` to test a pure-delegation framing. All three
+behaved identically: Claude Code reported `agent:custom:<name>` against
+`cursor-cli-ask`, `cursor-agent --mode ask --trust -p ... stream-json` processes
+were observed running, and the parent looped through repeated invocations for
+8+ minutes without a handback. The first self-reported *"the failure looks like
+the cursor-cli backend not producing a handback"*; the other two were stopped to
+stop burning Cursor quota.
+
+The direct path is unaffected — `claude -p --model cursor-cli-ask` returns
+normally — so this is the subagent loop specifically, and it follows from the
+missing `tool_use`: the parent has no tool calls to drive and no terminating
+condition it recognises. Not worth working around; the backend is a delegate,
+not a worker.
