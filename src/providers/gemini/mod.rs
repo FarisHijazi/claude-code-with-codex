@@ -119,6 +119,22 @@ impl Provider for GeminiProvider {
             .collect()
     }
 
+    /// Everything except the `-thinking` tier.
+    ///
+    /// gemini-webapi 2.1 removed that tier upstream (`*_LITE` is a new cheap
+    /// tier, not a rename), so gemini-web-api serves those ids as plain flash
+    /// and stopped advertising them itself. Offering one here would promise a
+    /// model the backend silently substitutes. The ids stay in
+    /// `supported_models` so they still route — a server pinned to 2.0.x really
+    /// does have the tier, and anyone who asks for it by name still gets it.
+    fn advertised_models(&self) -> Vec<String> {
+        GEMINI_MODELS
+            .iter()
+            .filter(|model| !model.contains("thinking"))
+            .map(|model| (*model).to_string())
+            .collect()
+    }
+
     fn cli(&self) -> &'static dyn CliHandlers {
         &GEMINI_CLI
     }
@@ -486,6 +502,26 @@ mod tests {
         assert!(models.contains(&"gemini-3-pro".to_string()));
         assert!(models.contains(&"gemini-3-flash".to_string()));
         assert_eq!(models.len(), GEMINI_MODELS.len());
+    }
+
+    #[test]
+    fn thinking_tier_is_accepted_but_not_offered() {
+        let provider = GeminiProvider::new();
+        let offered = provider.advertised_models();
+        let accepted = provider.supported_models();
+
+        // Not offered: gemini-webapi 2.1 serves these as plain flash.
+        assert!(
+            !offered.iter().any(|m| m.contains("thinking")),
+            "offered a model the backend substitutes: {offered:?}"
+        );
+        // Still accepted, so routing reaches gemini for a 2.0.x server.
+        assert!(accepted.iter().any(|m| m.contains("thinking")));
+        assert!(offered.len() < accepted.len());
+        // Everything offered must be accepted, or it would route nowhere.
+        for model in &offered {
+            assert!(accepted.contains(model), "{model} is offered but not accepted");
+        }
     }
 
     /// Routing only sends gemini ids here, so a foreign id is not an error to

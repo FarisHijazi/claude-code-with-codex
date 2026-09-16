@@ -56,7 +56,21 @@ impl Availability {
 #[async_trait]
 pub trait Provider: Send + Sync {
     fn name(&self) -> &'static str;
+
+    /// Every model id this backend ACCEPTS. Drives routing, so a model missing
+    /// here cannot be reached at all.
     fn supported_models(&self) -> Vec<String>;
+
+    /// The subset worth OFFERING in `/v1/models`, the `models` banner and the
+    /// picker. Defaults to everything accepted.
+    ///
+    /// These differ when an upstream drops a model but we still want the id to
+    /// work: keeping it in `supported_models` preserves routing, while leaving
+    /// it out here stops us offering something the backend would silently serve
+    /// as a different model.
+    fn advertised_models(&self) -> Vec<String> {
+        self.supported_models()
+    }
     fn cli(&self) -> &'static dyn CliHandlers;
 
     /// Whether this backend can serve a request right now.

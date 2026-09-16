@@ -48,12 +48,20 @@ fn model_ids(payload: &Value) -> Vec<String> {
 #[tokio::test]
 async fn gemini_models_are_advertised() {
     let ids = model_ids(&models_payload().await);
-    for expected in ["gemini-3-pro", "gemini-3-flash", "gemini-3-flash-thinking"] {
+    for expected in ["gemini-3-pro", "gemini-3-flash", "gemini-3-flash-advanced"] {
         assert!(
             ids.contains(&expected.to_string()),
             "missing {expected}: {ids:?}"
         );
     }
+    // The `-thinking` tier is accepted but deliberately not offered: gemini-webapi
+    // 2.1 removed it upstream, so the server serves those ids as plain flash.
+    // `gemini_and_cursor_cli_resolve_to_their_own_providers` covers that they
+    // still route.
+    assert!(
+        !ids.iter().any(|id| id.contains("thinking")),
+        "offered a model the backend substitutes: {ids:?}"
+    );
 }
 
 #[tokio::test]

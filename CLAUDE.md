@@ -86,12 +86,21 @@ any of the three.
    a hidden id still routes and signing in needs no restart. Tests that assert a
    provider appears must set `CCP_SHOW_ALL_MODELS=1` — two upstream CLI tests and
    one of this fork's own had to be updated for exactly that reason.
-9. **The `cursor` backend can borrow `cursor-agent`'s token** from the macOS
+9. **Accepted and advertised are different sets.** `Provider::supported_models()`
+   is what the backend ACCEPTS and is what `provider_for_model` routes on;
+   `Provider::advertised_models()` (default: the same) is what `/v1/models`, the
+   `models` banner and the picker OFFER. Narrow the second, never the first: the
+   `-thinking` gemini ids are hidden because gemini-webapi 2.1 serves them as
+   plain flash, but they still route for a server pinned to 2.0.x. Deleting an id
+   from `GEMINI_MODELS` instead breaks routing — a test caught exactly that.
+   `registry::tests::everything_advertised_can_actually_be_routed` pins the
+   invariant that the offered set is always a subset of the routable one.
+10. **The `cursor` backend can borrow `cursor-agent`'s token** from the macOS
    Keychain (`cursor-access-token`/`cursor-user`) when the proxy has no login of
    its own. Read fresh every time, never written to the proxy's store — copying
    it would go stale the moment the CLI refreshed. Not to be confused with the
    `cursor-cli` backend, which spawns the CLI rather than reusing its token.
-10. **`gemini` overlaps with `claude-code-router`**, which routes to any
+11. **`gemini` overlaps with `claude-code-router`**, which routes to any
    OpenAI-compatible endpoint from config. It is kept to avoid running a second
    gateway alongside the Claude/Codex subscription logic here — see the devlog
    before extending it. `cursor-cli` has no equivalent anywhere.
