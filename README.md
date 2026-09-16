@@ -322,9 +322,13 @@ uvx --from git+https://github.com/FarisHijazi/gemini-web-api gemini-web-api
 claude-codex gemini auth status
 ```
 
-Then `/model gemini-3-pro` inside Claude Code. Ids: `gemini-3-pro`,
-`gemini-3-flash`, `gemini-3-flash-thinking`, each also in `-plus` and
-`-advanced` tiers.
+Then `/model gemini-3-pro` inside Claude Code. Offered ids: `gemini-3-pro` and
+`gemini-3-flash`, each also in `-plus` and `-advanced` tiers.
+
+`gemini-3-flash-thinking` (and its tiers) still work if you type one, but are
+deliberately **not** listed: gemini-webapi 2.1 removed that tier upstream, so a
+current server answers those ids with plain flash. They stay routable for a
+server pinned to 2.0.x, which really does have the tier.
 
 There is no separate login: the Google session lives in the gemini-web-api
 server, so `auth status` reports whether that server is reachable.
