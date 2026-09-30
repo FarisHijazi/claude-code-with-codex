@@ -54,10 +54,9 @@ async fn gemini_models_are_advertised() {
             "missing {expected}: {ids:?}"
         );
     }
-    // The `-thinking` tier is accepted but deliberately not offered: gemini-webapi
-    // 2.1 removed it upstream, so the server serves those ids as plain flash.
-    // `gemini_and_cursor_cli_resolve_to_their_own_providers` covers that they
-    // still route.
+    // The `-thinking` tier is not offered: gemini-webapi 2.1 removed it upstream,
+    // so the server serves those ids as plain flash. They still route, because
+    // any `gemini-*` id goes to gemini (`Registry::provider_for_model`).
     assert!(
         !ids.iter().any(|id| id.contains("thinking")),
         "offered a model the backend substitutes: {ids:?}"
