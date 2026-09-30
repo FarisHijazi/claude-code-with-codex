@@ -86,15 +86,15 @@ any of the three.
    a hidden id still routes and signing in needs no restart. Tests that assert a
    provider appears must set `CCP_SHOW_ALL_MODELS=1` — two upstream CLI tests and
    one of this fork's own had to be updated for exactly that reason.
-9. **Accepted and advertised are different sets.** `Provider::supported_models()`
-   is what the backend ACCEPTS and is what `provider_for_model` routes on;
-   `Provider::advertised_models()` (default: the same) is what `/v1/models`, the
-   `models` banner and the picker OFFER. Narrow the second, never the first: the
-   `-thinking` gemini ids are hidden because gemini-webapi 2.1 serves them as
-   plain flash, but they still route for a server pinned to 2.0.x. Deleting an id
-   from `GEMINI_MODELS` instead breaks routing — a test caught exactly that.
-   `registry::tests::everything_advertised_can_actually_be_routed` pins the
-   invariant that the offered set is always a subset of the routable one.
+9. **Any `gemini-*` id routes to gemini, listed or not.** `GEMINI_MODELS` is
+   only what we LIST; `provider_for_model` falls back to gemini for any
+   `gemini-` id after the exact-match pass, matching the backend, which already
+   forwards unlisted `gemini-*` ids verbatim. So hiding a model is just deleting
+   it from the list — the `-thinking` ids are unlisted (gemini-webapi 2.1 serves
+   them as plain flash) yet still route for a 2.0.x server. An earlier design
+   kept a second "advertised" set on the `Provider` trait for this; the fallback
+   made it unnecessary. `registry::tests::everything_listed_can_actually_be_routed`
+   pins that every listed id routes.
 10. **The `cursor` backend can borrow `cursor-agent`'s token** from the macOS
    Keychain (`cursor-access-token`/`cursor-user`) when the proxy has no login of
    its own. Read fresh every time, never written to the proxy's store — copying

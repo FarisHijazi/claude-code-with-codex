@@ -55,19 +55,8 @@ pub(crate) const GROK_MODELS: &[&str] = &["grok-composer-2.5-fast", "grok-4.5"];
 
 pub struct Registry {
     alias_provider: AliasProvider,
-    /// Accepted ids -> provider. Routing reads this.
     models: BTreeMap<String, Vec<String>>,
-    /// Offered ids. A subset of `models`; listings read this.
-    advertised: BTreeMap<String, Vec<String>>,
     handlers: BTreeMap<String, Arc<dyn Provider>>,
-}
-
-/// The offered-model map, derived from each handler's own answer.
-fn advertised_from(handlers: &BTreeMap<String, Arc<dyn Provider>>) -> BTreeMap<String, Vec<String>> {
-    handlers
-        .iter()
-        .map(|(name, provider)| (name.clone(), provider.advertised_models()))
-        .collect()
 }
 
 impl Registry {
@@ -118,11 +107,9 @@ impl Registry {
             handlers.insert(name.clone(), handler);
         }
 
-        let advertised = advertised_from(&handlers);
         Self {
             alias_provider,
             models,
-            advertised,
             handlers,
         }
     }
@@ -142,11 +129,9 @@ impl Registry {
             models.insert(name.clone(), provider.supported_models());
             handlers.insert(name, provider);
         }
-        let advertised = advertised_from(&handlers);
         Self {
             alias_provider,
             models,
-            advertised,
             handlers,
         }
     }
@@ -161,10 +146,8 @@ impl Registry {
         self.handlers.get(name).cloned()
     }
 
-    /// Ids offered for a backend. Narrower than what it accepts — see
-    /// `Provider::advertised_models`.
-    pub fn advertised_models_for(&self, provider: &str) -> Vec<String> {
-        let mut models = self.advertised.get(provider).cloned().unwrap_or_default();
+    pub fn supported_models_for(&self, provider: &str) -> Vec<String> {
+        let mut models = self.models.get(provider).cloned().unwrap_or_default();
         if provider == self.alias_provider.as_str() {
             for alias in ANTHROPIC_STYLE_ALIASES {
                 if !models.iter().any(|value| value == alias) {
@@ -203,7 +186,7 @@ impl Registry {
     pub fn all_supported_models(&self) -> Vec<(String, String)> {
         let mut out = Vec::new();
         for provider in self.listable_providers() {
-            for model in self.advertised_models_for(&provider) {
+            for model in self.supported_models_for(&provider) {
                 out.push((model, provider.clone()));
             }
         }
@@ -213,7 +196,7 @@ impl Registry {
     pub fn grouped_models(&self) -> BTreeMap<String, Vec<String>> {
         let mut out = BTreeMap::new();
         for provider in self.listable_providers() {
-            let models = self.advertised_models_for(&provider);
+            let models = self.supported_models_for(&provider);
             out.insert(provider, models);
         }
         out
@@ -223,7 +206,7 @@ impl Registry {
     pub fn grouped_models_all(&self) -> BTreeMap<String, Vec<String>> {
         self.handlers
             .keys()
-            .map(|provider| (provider.clone(), self.advertised_models_for(provider)))
+            .map(|provider| (provider.clone(), self.supported_models_for(provider)))
             .collect()
     }
 
@@ -261,6 +244,12 @@ impl Registry {
             if models.iter().any(|candidate| candidate == &normalized) {
                 return self.handlers.get(name).cloned();
             }
+        }
+        // Any other gemini id goes to gemini too: the backend forwards unlisted
+        // `gemini-*` ids verbatim (`gemini::models::resolve_model`), so a model
+        // the server adds, or one we deliberately stop listing, still routes.
+        if normalized.starts_with("gemini-") {
+            return self.handlers.get("gemini").cloned();
         }
 
         None
@@ -441,10 +430,9 @@ fn build_cursor_models() -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    /// The failure this split exists to prevent: an id we advertise but cannot
-    /// route, or one we drop from routing while still offering it.
+    /// Every id we list must route somewhere.
     #[test]
-    fn everything_advertised_can_actually_be_routed() {
+    fn everything_listed_can_actually_be_routed() {
         let registry = Registry::with_default_alias();
         for (provider, offered) in registry.grouped_models_all() {
             for model in offered {
@@ -459,7 +447,7 @@ mod tests {
     #[test]
     fn gemini_thinking_ids_route_without_being_offered() {
         let registry = Registry::with_default_alias();
-        let offered = registry.advertised_models_for("gemini");
+        let offered = registry.supported_models_for("gemini");
         assert!(!offered.iter().any(|m| m.contains("thinking")));
         for model in [
             "gemini-3-flash-thinking",

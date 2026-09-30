@@ -8,8 +8,13 @@
 /// target for Claude-shaped aliases when gemini is the alias provider.
 pub const GEMINI_DEFAULT_MODEL: &str = "gemini-3-pro";
 
-/// Ids accepted by gemini-web-api. `-plus` / `-advanced` are subscription
+/// Ids offered by gemini-web-api. `-plus` / `-advanced` are subscription
 /// tiers, not different families.
+///
+/// This is what we LIST, not what we accept: routing sends any `gemini-*` id
+/// here (`Registry::provider_for_model`). That is how `gemini-3-flash-thinking`
+/// still works without being offered -- gemini-webapi 2.1 removed the thinking
+/// tier, so a current server answers it with plain flash.
 pub const GEMINI_MODELS: &[&str] = &[
     "gemini-3-pro",
     "gemini-3-pro-plus",
@@ -17,9 +22,6 @@ pub const GEMINI_MODELS: &[&str] = &[
     "gemini-3-flash",
     "gemini-3-flash-plus",
     "gemini-3-flash-advanced",
-    "gemini-3-flash-thinking",
-    "gemini-3-flash-thinking-plus",
-    "gemini-3-flash-thinking-advanced",
 ];
 
 /// Models whose replies carry a reasoning stream worth surfacing as Anthropic
